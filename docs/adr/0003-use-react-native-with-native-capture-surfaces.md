@@ -1,0 +1,3 @@
+# Use React Native With Native Capture Surfaces
+
+Sharebook will use React Native with Expo libraries/modules for the main app and Review Inbox, but EAS will not be a core build or deployment dependency. The first beta will target both Android and iOS, native `ios/` and `android/` projects will be owned once share surfaces begin, and deployment should be automated with fastlane for TestFlight and Google Play beta tracks. This preserves useful Expo app libraries while acknowledging that Android share targets, iOS share extensions, background handoff, notifications, signing, and deployment need explicit native/project control.

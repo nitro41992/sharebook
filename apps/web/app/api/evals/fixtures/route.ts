@@ -1,6 +1,52 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient, getCurrentUser } from "../../../lib/supabase-server";
 
+function textList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+export async function GET(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const url = new URL(request.url);
+  const captureId = url.searchParams.get("captureId");
+  const supabase = createSupabaseAdminClient();
+  let query = supabase
+    .from("eval_fixtures")
+    .select(
+      `
+      *,
+      eval_runs(*)
+    `
+    )
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
+
+  if (captureId) query = query.eq("capture_id", captureId);
+
+  const { data, error } = await query.limit(20);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const fixtures = (data ?? []).map((fixture) => ({
+    ...fixture,
+    eval_runs: [...(fixture.eval_runs ?? [])]
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+      .slice(0, 5)
+  }));
+
+  return NextResponse.json({ fixtures });
+}
+
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -9,7 +55,10 @@ export async function POST(request: Request) {
     captureId?: string;
     label?: string;
     expectedIntent?: string | null;
+    acceptableIntents?: string[] | string;
+    badIntents?: string[] | string;
     requiredEntities?: string[];
+    expectedReminders?: string[] | string;
     searchQueries?: string[];
     notes?: string | null;
   };
@@ -41,8 +90,11 @@ export async function POST(request: Request) {
       label: body.label || capture.display_title || capture.title || "Untitled fixture",
       expected_intent:
         body.expectedIntent ?? capture.current_save_intent ?? capture.default_intent ?? null,
-      required_entities: body.requiredEntities ?? [],
-      search_queries: body.searchQueries ?? [],
+      acceptable_intents: textList(body.acceptableIntents),
+      bad_intents: textList(body.badIntents),
+      required_entities: textList(body.requiredEntities),
+      expected_reminders: textList(body.expectedReminders),
+      search_queries: textList(body.searchQueries),
       notes: body.notes ?? null
     })
     .select("*")

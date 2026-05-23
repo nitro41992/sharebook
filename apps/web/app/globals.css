@@ -151,6 +151,10 @@ a {
   resize: vertical;
 }
 
+.textarea.compact {
+  min-height: 72px;
+}
+
 .input:focus,
 .textarea:focus,
 .select:focus {
@@ -377,6 +381,51 @@ a {
 
 .search-box input {
   flex: 1;
+}
+
+.search-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.search-result {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.search-result:hover,
+.search-result.active {
+  border-color: rgba(181, 99, 31, 0.42);
+  background: rgba(181, 99, 31, 0.08);
+}
+
+.search-result strong,
+.search-result .muted {
+  display: block;
+}
+
+.fixture-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.eval-run-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.eval-run {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
 }
 
 .empty {

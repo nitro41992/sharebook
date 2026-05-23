@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { loadCaptureAnalysisInput } from "../../../lib/analysis-input";
 import { analyzeCapture, CaptureAnalysisModelError } from "../../../lib/model-router";
+import { searchCapturesForUser } from "../../../lib/search";
 import { createSupabaseAdminClient, getCurrentUser } from "../../../lib/supabase-server";
 
 type EvalFixture = {
@@ -8,6 +9,9 @@ type EvalFixture = {
   acceptable_intents: string[] | null;
   bad_intents: string[] | null;
   required_entities: string[] | null;
+  expected_reminders: string[] | null;
+  search_queries: string[] | null;
+  capture_id: string;
 };
 
 type AnalysisForScoring = {
@@ -17,9 +21,23 @@ type AnalysisForScoring = {
   entities?: Array<{
     name: string;
   }>;
+  suggested_reminders?: Array<{
+    trigger_value?: string;
+    rationale?: string;
+  }>;
 };
 
-function scoreFixture(fixture: EvalFixture, analysis: AnalysisForScoring) {
+function includesText(haystack: string, needle: string) {
+  return haystack.toLowerCase().includes(needle.toLowerCase());
+}
+
+async function scoreFixture(input: {
+  supabase: ReturnType<typeof createSupabaseAdminClient>;
+  userId: string;
+  fixture: EvalFixture;
+  analysis: AnalysisForScoring;
+}) {
+  const { fixture, analysis } = input;
   const expectedIntent = fixture.expected_intent;
   const acceptable = new Set([expectedIntent, ...(fixture.acceptable_intents ?? [])].filter(Boolean));
   const bad = new Set(fixture.bad_intents ?? []);
@@ -34,15 +52,39 @@ function scoreFixture(fixture: EvalFixture, analysis: AnalysisForScoring) {
   const intentPass = acceptable.size === 0 || acceptable.has(actualIntent);
   const badIntentHit = actualIntent ? bad.has(actualIntent) : false;
   const entityPass = missingEntities.length === 0;
+  const reminders = analysis?.suggested_reminders ?? [];
+  const missingReminders = (fixture.expected_reminders ?? []).filter((expected) => {
+    return !reminders.some((reminder) =>
+      includesText(`${reminder.trigger_value ?? ""} ${reminder.rationale ?? ""}`, expected)
+    );
+  });
+  const reminderPass = missingReminders.length === 0;
+  const searchMisses = [];
+
+  for (const query of fixture.search_queries ?? []) {
+    const results = await searchCapturesForUser(input.supabase, {
+      userId: input.userId,
+      query,
+      limit: 10
+    });
+    if (!results.some((result) => result.capture_id === fixture.capture_id)) {
+      searchMisses.push(query);
+    }
+  }
+  const searchPass = searchMisses.length === 0;
 
   return {
-    passed: intentPass && entityPass && !badIntentHit,
+    passed: intentPass && entityPass && reminderPass && searchPass && !badIntentHit,
     score: {
       actual_intent: actualIntent,
       intent_pass: intentPass,
       bad_intent_hit: badIntentHit,
       missing_entities: missingEntities,
-      entity_pass: entityPass
+      entity_pass: entityPass,
+      missing_reminders: missingReminders,
+      reminder_pass: reminderPass,
+      search_misses: searchMisses,
+      search_pass: searchPass
     }
   };
 }
@@ -141,7 +183,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message, analysisRun: run }, { status: 500 });
   }
 
-  const scored = scoreFixture(fixture, analysis ?? {});
+  const scored = await scoreFixture({
+    supabase,
+    userId: user.id,
+    fixture,
+    analysis: analysis ?? {}
+  });
   const { data: evalRun, error: evalError } = await supabase
     .from("eval_runs")
     .insert({

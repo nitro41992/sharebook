@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive,
   Brain,
@@ -73,6 +73,12 @@ type Capture = {
     rationale: string;
     confidence: number;
   }>;
+  suggested_actions?: Array<{
+    type: string;
+    label: string;
+    rationale: string;
+    confidence: number;
+  }>;
   collection_suggestions?: Array<{
     id: string;
     name: string;
@@ -85,7 +91,42 @@ type SearchResult = {
   id: string;
   capture_id: string;
   document: string;
+  capture?: Capture;
   captures?: Capture;
+  match_context: string;
+  match_signal: string;
+  score: number;
+};
+
+type EvalRun = {
+  id: string;
+  model_route: string;
+  passed: boolean | null;
+  score: {
+    actual_intent?: string | null;
+    intent_pass?: boolean;
+    bad_intent_hit?: boolean;
+    missing_entities?: string[];
+    entity_pass?: boolean;
+    missing_reminders?: string[];
+    reminder_pass?: boolean;
+    search_misses?: string[];
+    search_pass?: boolean;
+  };
+  created_at: string;
+};
+
+type EvalFixture = {
+  id: string;
+  label: string | null;
+  expected_intent: IntentCategory | null;
+  acceptable_intents: string[];
+  bad_intents: string[];
+  required_entities: string[];
+  expected_reminders: string[];
+  search_queries: string[];
+  notes: string | null;
+  eval_runs?: EvalRun[];
 };
 
 type InspectorTab = "review" | "source" | "debug" | "evals";
@@ -124,6 +165,47 @@ function JsonBlock({ value }: { value: unknown }) {
   return <pre className="code-block">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>;
 }
 
+function linesToList(value: string) {
+  return value
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function listToLines(value?: string[]) {
+  return (value ?? []).join("\n");
+}
+
+function reminderBlankReason(capture: Capture, run?: AnalysisRun) {
+  if (capture.analysis_state === "queued") {
+    return "Analysis has not run yet, so Sharebook has not looked for reminder-worthy triggers.";
+  }
+  if (capture.analysis_state === "processing") {
+    return "Analysis is still running. Reminder suggestions will appear only after the model returns a concrete trigger.";
+  }
+  if (capture.analysis_state === "failed") {
+    return "The latest analysis failed before a trustworthy reminder suggestion could be stored.";
+  }
+  if (!run) {
+    return "No analysis run is recorded yet.";
+  }
+  const output =
+    run.repaired_output && typeof run.repaired_output === "object"
+      ? (run.repaired_output as { suggested_reminders?: unknown; suggested_actions?: unknown })
+      : null;
+  const rawReminders = Array.isArray(output?.suggested_reminders)
+    ? output.suggested_reminders.length
+    : 0;
+  const rawActions = Array.isArray(output?.suggested_actions) ? output.suggested_actions.length : 0;
+  if (rawReminders === 0 && rawActions > 0) {
+    return "The model proposed actions, but did not identify a concrete time, place, event, trip, or clear follow-up trigger for a Reminder.";
+  }
+  if (rawReminders === 0) {
+    return "The model left reminders blank. That is valid when the Capture lacks a concrete trigger; Sharebook favors fewer, higher-confidence reminders.";
+  }
+  return "The latest run contained reminder-like output, but none is currently stored. Check the Debug tab for schema or persistence details.";
+}
+
 export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture[] }) {
   const [captures, setCaptures] = useState(initialCaptures);
   const [selectedId, setSelectedId] = useState(initialCaptures[0]?.id ?? "");
@@ -134,6 +216,16 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   const [tab, setTab] = useState<InspectorTab>("review");
   const [fixtureStatus, setFixtureStatus] = useState("");
   const [compareStatus, setCompareStatus] = useState("");
+  const [fixtures, setFixtures] = useState<EvalFixture[]>([]);
+  const [evalStatus, setEvalStatus] = useState("");
+  const [fixtureDraft, setFixtureDraft] = useState({
+    expectedIntent: "",
+    acceptableIntents: "",
+    badIntents: "",
+    requiredEntities: "",
+    expectedReminders: "",
+    searchQueries: ""
+  });
 
   const selected = useMemo(
     () => captures.find((capture) => capture.id === selectedId) ?? captures[0],
@@ -143,6 +235,18 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   const selectedPreview = selected?.capture_assets?.find((asset) =>
     asset.mime_type?.startsWith("image/")
   );
+  const selectedActions = useMemo(() => {
+    const output =
+      selectedRun?.repaired_output && typeof selectedRun.repaired_output === "object"
+        ? (selectedRun.repaired_output as { suggested_actions?: unknown })
+        : null;
+    return Array.isArray(output?.suggested_actions)
+      ? output.suggested_actions.filter(
+          (action): action is { type?: string; label?: string; rationale?: string; confidence?: number } =>
+            Boolean(action && typeof action === "object")
+        )
+      : [];
+  }, [selectedRun]);
 
   async function refreshCaptures(nextSelectedId?: string) {
     const response = await fetch("/api/captures");
@@ -246,8 +350,23 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
     }
     const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
     const json = await readJsonResponse(response);
+    if (!response.ok) {
+      alert(json.error ?? "Search failed");
+      return;
+    }
     setSearchResults(json.results ?? []);
   }
+
+  const loadFixtures = useCallback(async (captureId = selected?.id) => {
+    if (!captureId) return;
+    const response = await fetch(`/api/evals/fixtures?captureId=${encodeURIComponent(captureId)}`);
+    const json = await readJsonResponse(response);
+    if (!response.ok) {
+      setEvalStatus(json.error ?? "Could not load fixtures");
+      return;
+    }
+    setFixtures(json.fixtures ?? []);
+  }, [selected?.id]);
 
   async function saveFixture() {
     if (!selected) return;
@@ -258,11 +377,35 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
       body: JSON.stringify({
         captureId: selected.id,
         label: captureTitle(selected),
-        expectedIntent: selected.current_save_intent ?? selected.default_intent
+        expectedIntent:
+          fixtureDraft.expectedIntent || selected.current_save_intent || selected.default_intent,
+        acceptableIntents: linesToList(fixtureDraft.acceptableIntents),
+        badIntents: linesToList(fixtureDraft.badIntents),
+        requiredEntities: linesToList(fixtureDraft.requiredEntities),
+        expectedReminders: linesToList(fixtureDraft.expectedReminders),
+        searchQueries: linesToList(fixtureDraft.searchQueries)
       })
     });
     const json = await readJsonResponse(response);
     setFixtureStatus(response.ok ? `Saved fixture ${json.fixture?.id?.slice(0, 8)}` : json.error);
+    if (response.ok) await loadFixtures(selected.id);
+  }
+
+  async function runEval(fixtureId: string, modelRoute = "high_precision_openai") {
+    setEvalStatus(`Running ${modelRoute} eval...`);
+    const response = await fetch("/api/evals/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ fixtureId, modelRoute })
+    });
+    const json = await readJsonResponse(response);
+    if (!response.ok) {
+      setEvalStatus(json.error ?? "Eval failed");
+      return;
+    }
+    setEvalStatus(json.evalRun?.passed ? "Eval passed" : "Eval needs review");
+    await loadFixtures(selected?.id);
+    if (selected) await refreshCaptures(selected.id);
   }
 
   async function compareModels() {
@@ -300,6 +443,23 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   useEffect(() => {
     setCaptures(initialCaptures);
   }, [initialCaptures]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setFixtureDraft({
+      expectedIntent: selected.current_save_intent ?? selected.default_intent ?? "",
+      acceptableIntents: "",
+      badIntents: "",
+      requiredEntities: listToLines(
+        selected.captured_entities?.slice(0, 4).map((entity) => entity.display_name)
+      ),
+      expectedReminders: "",
+      searchQueries: ""
+    });
+    setFixtureStatus("");
+    setEvalStatus("");
+    loadFixtures(selected.id);
+  }, [loadFixtures, selected]);
 
   return (
     <div className="app-shell">
@@ -379,10 +539,38 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
             </button>
           </div>
           {searchResults.length ? (
-            <p className="muted small">
-              Search returned {searchResults.length} result
-              {searchResults.length === 1 ? "" : "s"}. Select the matching capture below.
-            </p>
+            <div className="search-results">
+              {searchResults.map((result) => {
+                const capture = result.capture ?? result.captures;
+                if (!capture) return null;
+                return (
+                  <button
+                    className={`search-result ${selected?.id === result.capture_id ? "active" : ""}`}
+                    key={`${result.capture_id}-${result.id}`}
+                    onClick={() => setSelectedId(result.capture_id)}
+                    type="button"
+                  >
+                    <span>
+                      <strong>{captureTitle(capture)}</strong>
+                      <span className="muted small">{result.match_context}</span>
+                    </span>
+                    <span className="row-meta">
+                      <span className={`chip ${stateClass(capture.analysis_state)}`}>
+                        {capture.analysis_state}
+                      </span>
+                      {capture.current_save_intent ? (
+                        <span className="chip intent">
+                          {intentLabels[capture.current_save_intent]}
+                        </span>
+                      ) : null}
+                      {capture.capture_type ? <span className="chip">{capture.capture_type}</span> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : query.trim() ? (
+            <p className="muted small">No visible search matches yet.</p>
           ) : null}
         </div>
         <div className="capture-list">
@@ -546,7 +734,26 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                         </div>
                       ))
                     ) : (
-                      <p className="muted small">No reminder suggestions yet.</p>
+                      <div className="suggestion-item">
+                        <strong>No reminder suggestions stored</strong>
+                        <p className="muted small">{reminderBlankReason(selected, selectedRun)}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="panel">
+                  <div className="label">Suggested actions</div>
+                  <div className="suggestion-list" style={{ marginTop: 10 }}>
+                    {selectedActions.length ? (
+                      selectedActions.map((action, index) => (
+                        <div className="suggestion-item" key={`${action.type ?? "action"}-${index}`}>
+                          <strong>{action.label ?? action.type ?? "Suggested action"}</strong>{" "}
+                          {action.type ? <span className="muted small">{action.type}</span> : null}
+                          {action.rationale ? <p className="muted small">{action.rationale}</p> : null}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted small">No suggested actions recorded in the latest run.</p>
                     )}
                   </div>
                 </div>
@@ -664,6 +871,94 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
             {tab === "evals" ? (
               <>
                 <div className="panel">
+                  <div className="label">Fixture labels</div>
+                  <div className="fixture-grid" style={{ marginTop: 10 }}>
+                    <label className="field">
+                      <span className="label">Expected intent</span>
+                      <select
+                        className="select"
+                        value={fixtureDraft.expectedIntent}
+                        onChange={(event) =>
+                          setFixtureDraft((draft) => ({
+                            ...draft,
+                            expectedIntent: event.target.value
+                          }))
+                        }
+                      >
+                        <option value="">None</option>
+                        {intentCategories.map((intent) => (
+                          <option key={intent} value={intent}>
+                            {intentLabels[intent]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="label">Acceptable intents</span>
+                      <textarea
+                        className="textarea compact"
+                        value={fixtureDraft.acceptableIntents}
+                        onChange={(event) =>
+                          setFixtureDraft((draft) => ({
+                            ...draft,
+                            acceptableIntents: event.target.value
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="label">Bad intents</span>
+                      <textarea
+                        className="textarea compact"
+                        value={fixtureDraft.badIntents}
+                        onChange={(event) =>
+                          setFixtureDraft((draft) => ({
+                            ...draft,
+                            badIntents: event.target.value
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="label">Required entities</span>
+                      <textarea
+                        className="textarea compact"
+                        value={fixtureDraft.requiredEntities}
+                        onChange={(event) =>
+                          setFixtureDraft((draft) => ({
+                            ...draft,
+                            requiredEntities: event.target.value
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="label">Expected reminders</span>
+                      <textarea
+                        className="textarea compact"
+                        value={fixtureDraft.expectedReminders}
+                        onChange={(event) =>
+                          setFixtureDraft((draft) => ({
+                            ...draft,
+                            expectedReminders: event.target.value
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="label">Search queries</span>
+                      <textarea
+                        className="textarea compact"
+                        value={fixtureDraft.searchQueries}
+                        onChange={(event) =>
+                          setFixtureDraft((draft) => ({
+                            ...draft,
+                            searchQueries: event.target.value
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
                   <div className="toolbar">
                     <button className="button secondary" onClick={saveFixture}>
                       <CheckCircle2 size={16} />
@@ -676,6 +971,82 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                   </div>
                   {fixtureStatus ? <p className="muted small">{fixtureStatus}</p> : null}
                   {compareStatus ? <p className="muted small">{compareStatus}</p> : null}
+                  {evalStatus ? <p className="muted small">{evalStatus}</p> : null}
+                </div>
+                <div className="panel">
+                  <div className="label">Saved fixtures</div>
+                  <div className="suggestion-list" style={{ marginTop: 10 }}>
+                    {fixtures.length ? (
+                      fixtures.map((fixture) => (
+                        <div className="suggestion-item" key={fixture.id}>
+                          <div className="toolbar">
+                            <strong>{fixture.label || `Fixture ${fixture.id.slice(0, 8)}`}</strong>
+                            {fixture.expected_intent ? (
+                              <span className="chip intent">{intentLabels[fixture.expected_intent]}</span>
+                            ) : null}
+                          </div>
+                          <p className="muted small">
+                            {fixture.required_entities.length} entities ·{" "}
+                            {fixture.expected_reminders.length} reminders ·{" "}
+                            {fixture.search_queries.length} search queries
+                          </p>
+                          <div className="toolbar">
+                            <button
+                              className="button secondary"
+                              onClick={() => runEval(fixture.id)}
+                            >
+                              <Brain size={16} />
+                              Eval
+                            </button>
+                            <button
+                              className="button secondary"
+                              onClick={() => runEval(fixture.id, "openai_mini")}
+                            >
+                              <Sparkles size={16} />
+                              Mini eval
+                            </button>
+                          </div>
+                          {fixture.eval_runs?.length ? (
+                            <div className="eval-run-list">
+                              {fixture.eval_runs.map((run) => (
+                                <div className="eval-run" key={run.id}>
+                                  <span className={`chip ${run.passed ? "ready" : "warn"}`}>
+                                    {run.passed ? "passed" : "review"}
+                                  </span>
+                                  <span className="muted small">
+                                    {run.model_route} · {new Date(run.created_at).toLocaleString()}
+                                  </span>
+                                  <p className="muted small">
+                                    intent {run.score.intent_pass ? "ok" : "miss"} · entities{" "}
+                                    {run.score.entity_pass ? "ok" : "miss"} · reminders{" "}
+                                    {run.score.reminder_pass ? "ok" : "miss"} · search{" "}
+                                    {run.score.search_pass ? "ok" : "miss"}
+                                  </p>
+                                  {run.score.missing_entities?.length ? (
+                                    <p className="muted small">
+                                      Missing entities: {run.score.missing_entities.join(", ")}
+                                    </p>
+                                  ) : null}
+                                  {run.score.missing_reminders?.length ? (
+                                    <p className="muted small">
+                                      Missing reminders: {run.score.missing_reminders.join(", ")}
+                                    </p>
+                                  ) : null}
+                                  {run.score.search_misses?.length ? (
+                                    <p className="muted small">
+                                      Search misses: {run.score.search_misses.join(", ")}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted small">No fixtures saved for this capture yet.</p>
+                    )}
+                  </div>
                 </div>
                 <div className="panel">
                   <div className="label">Recent runs</div>

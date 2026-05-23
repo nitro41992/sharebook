@@ -1,0 +1,26 @@
+[
+  {
+    "label": "restaurant screenshot",
+    "expected_intent": "try_place",
+    "acceptable_intents": ["plan_trip_or_event"],
+    "bad_intents": ["read_later", "remember_fact"],
+    "required_entities": ["restaurant", "neighborhood"],
+    "search_queries": ["ramen place", "restaurant to try", "place near hotel"]
+  },
+  {
+    "label": "product page",
+    "expected_intent": "buy_later",
+    "acceptable_intents": ["compare_or_research"],
+    "bad_intents": ["try_place"],
+    "required_entities": ["product", "price"],
+    "search_queries": ["jacket I wanted", "price compare", "buy later"]
+  },
+  {
+    "label": "ambiguous screenshot",
+    "expected_intent": "review_later",
+    "acceptable_intents": ["use_as_reference", "remember_fact"],
+    "bad_intents": ["try_place", "buy_later"],
+    "required_entities": [],
+    "search_queries": ["screenshot I saved", "review later"]
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "name": "sharebook",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @sharebook/web",
+    "build": "npm run build --workspace @sharebook/web",
+    "lint": "npm run lint --workspace @sharebook/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

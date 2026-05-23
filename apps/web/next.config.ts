@@ -1,0 +1,12 @@
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  transpilePackages: ["@sharebook/shared"],
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "8mb"
+    }
+  }
+};
+
+export default nextConfig;

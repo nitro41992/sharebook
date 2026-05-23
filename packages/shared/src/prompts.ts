@@ -1,7 +1,7 @@
 import { intentCategories } from "./domain";
 
-export const ANALYSIS_SCHEMA_VERSION = "capture-analysis-v1";
-export const ANALYSIS_PROMPT_VERSION = "phase-0a-2026-05-23";
+export const ANALYSIS_SCHEMA_VERSION = "capture-analysis-v2";
+export const ANALYSIS_PROMPT_VERSION = "phase-0b-2026-05-23";
 
 export function buildCaptureAnalysisPrompt(input: {
   sourceApp?: string | null;
@@ -24,6 +24,7 @@ export function buildCaptureAnalysisPrompt(input: {
     "",
     "Trust rules:",
     "- Favor precision for default intent. Use review_later when uncertain.",
+    "- Write display_title as a short, scannable title under 90 characters.",
     "- Favor recall for entities and search phrases, but include confidence and evidence.",
     "- Suggest reminders only when there is a concrete time, place, event, or clear follow-up reason.",
     "- Do not invent names, prices, dates, or places without evidence.",

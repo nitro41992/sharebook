@@ -48,6 +48,7 @@ export const SuggestedCollectionSchema = z.object({
 
 export const CaptureAnalysisSchema = z.object({
   capture_type: CaptureTypeSchema,
+  display_title: z.string().min(1).max(120),
   summary: z.string().min(1),
   default_intent: z.object({
     category: IntentCategorySchema,

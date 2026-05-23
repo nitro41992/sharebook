@@ -25,6 +25,7 @@ export type AnalyzeCaptureInput = {
 
 export type AnalyzeCaptureResult = {
   analysis: CaptureAnalysis;
+  route: string;
   provider: string;
   model: string;
   promptVersion: string;
@@ -32,7 +33,53 @@ export type AnalyzeCaptureResult = {
   latencyMs: number;
   usage: Record<string, unknown>;
   costEstimate: number | null;
+  debug: AnalysisDebugArtifacts;
 };
+
+export type AnalysisDebugArtifacts = {
+  rawModelOutput: string | null;
+  extractedJson: unknown | null;
+  repairedOutput: unknown | null;
+  schemaErrors: Array<{ path: string; message: string }>;
+  inputSnapshot: Record<string, unknown>;
+};
+
+export class CaptureAnalysisModelError extends Error {
+  route: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  schemaVersion: string;
+  latencyMs: number;
+  usage: Record<string, unknown>;
+  costEstimate: number | null;
+  debug: AnalysisDebugArtifacts;
+
+  constructor(input: {
+    message: string;
+    route: string;
+    provider: string;
+    model: string;
+    promptVersion: string;
+    schemaVersion: string;
+    latencyMs: number;
+    usage?: Record<string, unknown>;
+    costEstimate?: number | null;
+    debug: AnalysisDebugArtifacts;
+  }) {
+    super(input.message);
+    this.name = "CaptureAnalysisModelError";
+    this.route = input.route;
+    this.provider = input.provider;
+    this.model = input.model;
+    this.promptVersion = input.promptVersion;
+    this.schemaVersion = input.schemaVersion;
+    this.latencyMs = input.latencyMs;
+    this.usage = input.usage ?? {};
+    this.costEstimate = input.costEstimate ?? null;
+    this.debug = input.debug;
+  }
+}
 
 function getRoute(route?: string | null) {
   return route || optionalEnv("DEFAULT_ANALYSIS_ROUTE") || "high_precision_openai";
@@ -74,6 +121,7 @@ function buildJsonContractPrompt() {
     "Do not wrap it in markdown.",
     "Required top-level keys:",
     "- capture_type: one of link, social_post, screenshot, image, text_note, mixed, unknown",
+    "- display_title: short string under 120 characters for list rows",
     "- summary: string",
     "- default_intent: { category, confidence, rationale }",
     "- entities: array",
@@ -108,18 +156,29 @@ function extractJsonObject(text: string) {
   throw new Error("Model did not return a JSON object.");
 }
 
-function parseAnalysisJson(text: string) {
-  const json = JSON.parse(extractJsonObject(text));
-  const repaired = repairAnalysisJson(json);
+function parseAnalysisJson(text: string, fallbackTitle?: string | null) {
+  const extracted = extractJsonObject(text);
+  const json = JSON.parse(extracted);
+  const repaired = repairAnalysisJson(json, fallbackTitle);
   const parsed = CaptureAnalysisSchema.safeParse(repaired);
   if (!parsed.success) {
-    throw new Error(
-      `JSON response did not match CaptureAnalysis schema: ${parsed.error.issues
-        .map((issue) => `${issue.path.join(".") || "root"} ${issue.message}`)
-        .join("; ")}`
-    );
+    return {
+      ok: false as const,
+      extractedJson: json,
+      repairedOutput: repaired,
+      schemaErrors: parsed.error.issues.map((issue) => ({
+        path: issue.path.join(".") || "root",
+        message: issue.message
+      }))
+    };
   }
-  return parsed.data;
+  return {
+    ok: true as const,
+    analysis: parsed.data,
+    extractedJson: json,
+    repairedOutput: repaired,
+    schemaErrors: []
+  };
 }
 
 function asString(value: unknown) {
@@ -196,7 +255,41 @@ function coerceActionType(type: unknown, label: string) {
   return "open_source";
 }
 
-function repairAnalysisJson(json: unknown) {
+function shortDisplayTitle(input: unknown, fallbackTitle?: string | null) {
+  const raw = asString(input) || asString(fallbackTitle) || "Untitled capture";
+  const compact = raw.replace(/\s+/g, " ").trim();
+  if (compact.length <= 90) return compact;
+  return `${compact.slice(0, 87).trim()}...`;
+}
+
+function coerceReminderTrigger(type: unknown) {
+  const value = asString(type).toLowerCase();
+  const allowed = new Set(["specific_time", "relative_time", "place", "event_or_trip"]);
+  if (allowed.has(value)) return value;
+  if (value.includes("place") || value.includes("location")) return "place";
+  if (value.includes("event") || value.includes("trip")) return "event_or_trip";
+  if (value.includes("time") || value.includes("date")) return "specific_time";
+  return "relative_time";
+}
+
+function reminderTriggerValue(item: Record<string, unknown>, fallback: unknown) {
+  return (
+    asString(
+      item.trigger_value ||
+        item.value ||
+        item.text ||
+        item.reminder ||
+        item.label ||
+        item.title ||
+        item.when ||
+        item.time
+    ) ||
+    asString(fallback) ||
+    "Later"
+  );
+}
+
+function repairAnalysisJson(json: unknown, fallbackTitle?: string | null) {
   const raw = json && typeof json === "object" ? (json as Record<string, unknown>) : {};
   const defaultIntent =
     raw.default_intent && typeof raw.default_intent === "object"
@@ -205,6 +298,7 @@ function repairAnalysisJson(json: unknown) {
 
   return {
     capture_type: raw.capture_type ?? "unknown",
+    display_title: shortDisplayTitle(raw.display_title || raw.title || raw.summary, fallbackTitle),
     summary: asString(raw.summary) || "No summary generated.",
     default_intent: {
       category: defaultIntent.category ?? "review_later",
@@ -237,7 +331,16 @@ function repairAnalysisJson(json: unknown) {
         })
       : [],
     suggested_reminders: Array.isArray(raw.suggested_reminders)
-      ? raw.suggested_reminders
+      ? raw.suggested_reminders.map((reminder) => {
+          const item =
+            reminder && typeof reminder === "object" ? (reminder as Record<string, unknown>) : {};
+          return {
+            trigger_type: coerceReminderTrigger(item.trigger_type || item.type),
+            trigger_value: reminderTriggerValue(item, reminder),
+            rationale: asString(item.rationale || item.reason) || "Suggested by analysis.",
+            confidence: asConfidence(item.confidence)
+          };
+        })
       : [],
     suggested_actions: Array.isArray(raw.suggested_actions)
       ? raw.suggested_actions.map((action) => {
@@ -252,7 +355,17 @@ function repairAnalysisJson(json: unknown) {
         })
       : [],
     suggested_collections: Array.isArray(raw.suggested_collections)
-      ? raw.suggested_collections
+      ? raw.suggested_collections.map((collection) => {
+          const item =
+            collection && typeof collection === "object"
+              ? (collection as Record<string, unknown>)
+              : {};
+          return {
+            name: asString(item.name || item.label || collection) || "Review later",
+            rationale: asString(item.rationale || item.reason) || "Suggested by analysis.",
+            confidence: asConfidence(item.confidence)
+          };
+        })
       : [],
     search_phrases: Array.isArray(raw.search_phrases)
       ? raw.search_phrases.map((phrase) => {
@@ -272,6 +385,15 @@ export async function analyzeCapture(input: AnalyzeCaptureInput): Promise<Analyz
   const route = getRoute(input.route);
   const { provider, model, sdkModel } = getModel(route);
   const started = Date.now();
+  const inputSnapshot = {
+    capture_id: input.captureId,
+    source_app: input.sourceApp ?? null,
+    url: input.url ?? null,
+    text_preview: input.text ? input.text.slice(0, 1200) : null,
+    has_asset: Boolean(input.assetUrl),
+    mime_type: input.mimeType ?? null,
+    url_metadata: input.urlMetadata ?? null
+  };
   const prompt = buildCaptureAnalysisPrompt({
     sourceApp: input.sourceApp,
     url: input.url,
@@ -287,36 +409,103 @@ export async function analyzeCapture(input: AnalyzeCaptureInput): Promise<Analyz
     content.push({ type: "image", image: new URL(input.assetUrl) });
   }
 
-  const textResult = await generateText({
-    model: sdkModel,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: buildJsonContractPrompt() },
-          ...content
-        ]
-      }
-    ]
-  });
+  let textResult: Awaited<ReturnType<typeof generateText>>;
 
   try {
-    const analysis = parseAnalysisJson(textResult.text);
+    textResult = await generateText({
+      model: sdkModel,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: buildJsonContractPrompt() },
+            ...content
+          ]
+        }
+      ]
+    });
+  } catch (error) {
+    throw new CaptureAnalysisModelError({
+      message: error instanceof Error ? error.message : "Model request failed",
+      route,
+      provider,
+      model,
+      promptVersion: ANALYSIS_PROMPT_VERSION,
+      schemaVersion: ANALYSIS_SCHEMA_VERSION,
+      latencyMs: Date.now() - started,
+      debug: {
+        rawModelOutput: null,
+        extractedJson: null,
+        repairedOutput: null,
+        schemaErrors: [],
+        inputSnapshot
+      }
+    });
+  }
+
+  try {
+    const parsed = parseAnalysisJson(
+      textResult.text,
+      input.urlMetadata?.title || input.url || input.text
+    );
+    if (!parsed.ok) {
+      throw new CaptureAnalysisModelError({
+        message: `JSON response did not match CaptureAnalysis schema: ${parsed.schemaErrors
+          .map((issue) => `${issue.path} ${issue.message}`)
+          .join("; ")}`,
+        route,
+        provider,
+        model,
+        promptVersion: ANALYSIS_PROMPT_VERSION,
+        schemaVersion: ANALYSIS_SCHEMA_VERSION,
+        latencyMs: Date.now() - started,
+        usage: textResult.usage ? { ...textResult.usage } : {},
+        debug: {
+          rawModelOutput: textResult.text,
+          extractedJson: parsed.extractedJson,
+          repairedOutput: parsed.repairedOutput,
+          schemaErrors: parsed.schemaErrors,
+          inputSnapshot
+        }
+      });
+    }
+    const analysis = parsed.analysis;
     return {
       analysis: normalizeAnalysisForTrust(analysis),
+      route,
       provider,
       model,
       promptVersion: ANALYSIS_PROMPT_VERSION,
       schemaVersion: ANALYSIS_SCHEMA_VERSION,
       latencyMs: Date.now() - started,
       usage: textResult.usage ? { ...textResult.usage } : {},
-      costEstimate: null
+      costEstimate: null,
+      debug: {
+        rawModelOutput: textResult.text,
+        extractedJson: parsed.extractedJson,
+        repairedOutput: parsed.repairedOutput,
+        schemaErrors: [],
+        inputSnapshot
+      }
     };
   } catch (error) {
-    throw new Error(
-      `Model response did not match analysis schema: ${
-        error instanceof Error ? error.message : "unknown schema error"
-      }. Raw response preview: ${textResult.text.slice(0, 700)}`
-    );
+    if (error instanceof CaptureAnalysisModelError) throw error;
+    throw new CaptureAnalysisModelError({
+      message: error instanceof Error ? error.message : "Model response could not be parsed",
+      route,
+      provider,
+      model,
+      promptVersion: ANALYSIS_PROMPT_VERSION,
+      schemaVersion: ANALYSIS_SCHEMA_VERSION,
+      latencyMs: Date.now() - started,
+      usage: textResult.usage ? { ...textResult.usage } : {},
+      debug: {
+        rawModelOutput: textResult.text,
+        extractedJson: null,
+        repairedOutput: null,
+        schemaErrors: [],
+        inputSnapshot
+      }
+    });
   }
 }

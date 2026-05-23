@@ -7,6 +7,7 @@ export function AuthForm() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const showDevAuth = process.env.NODE_ENV !== "production";
 
   async function signIn() {
     setLoading(true);
@@ -25,6 +26,13 @@ export function AuthForm() {
 
     setLoading(false);
     setMessage(error ? error.message : "Check your email for the sign-in link.");
+  }
+
+  function devSignIn() {
+    if (!email) return;
+    setLoading(true);
+    setMessage("");
+    window.location.href = `/auth/dev-login?email=${encodeURIComponent(email)}`;
   }
 
   return (
@@ -49,6 +57,11 @@ export function AuthForm() {
         <button className="button" disabled={loading || !email} onClick={signIn}>
           {loading ? "Sending..." : "Send magic link"}
         </button>
+        {showDevAuth ? (
+          <button className="button secondary" disabled={loading || !email} onClick={devSignIn}>
+            Dev sign in
+          </button>
+        ) : null}
         {message ? <p className="muted">{message}</p> : null}
       </div>
     </div>

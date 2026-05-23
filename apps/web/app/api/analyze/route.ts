@@ -1,31 +1,8 @@
 import { NextResponse } from "next/server";
+import { loadCaptureAnalysisInput } from "../../lib/analysis-input";
 import { buildSearchDocument } from "../../lib/search";
-import { analyzeCapture } from "../../lib/model-router";
-import { fetchUrlMetadata } from "../../lib/url-metadata";
+import { analyzeCapture, CaptureAnalysisModelError } from "../../lib/model-router";
 import { createSupabaseAdminClient, getCurrentUser } from "../../lib/supabase-server";
-
-async function getSignedAssetUrl(captureId: string, userId: string) {
-  const supabase = createSupabaseAdminClient();
-  const { data: asset } = await supabase
-    .from("capture_assets")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("capture_id", captureId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!asset) return null;
-
-  const { data } = await supabase.storage
-    .from("captures")
-    .createSignedUrl(asset.storage_path, 60 * 10);
-
-  return {
-    url: data?.signedUrl ?? null,
-    mimeType: asset.mime_type as string | null
-  };
-}
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
@@ -37,16 +14,18 @@ export async function POST(request: Request) {
   }
 
   const supabase = createSupabaseAdminClient();
-  const { data: capture, error } = await supabase
-    .from("captures")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("id", body.captureId)
-    .single();
-
-  if (error || !capture) {
-    return NextResponse.json({ error: error?.message ?? "Capture not found" }, { status: 404 });
+  let analysisInput: Awaited<ReturnType<typeof loadCaptureAnalysisInput>>;
+  try {
+    analysisInput = await loadCaptureAnalysisInput(supabase, {
+      userId: user.id,
+      captureId: body.captureId,
+      route: body.route
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Capture not found";
+    return NextResponse.json({ error: message }, { status: 404 });
   }
+  const { capture, urlMetadata } = analysisInput;
 
   await supabase
     .from("captures")
@@ -55,27 +34,16 @@ export async function POST(request: Request) {
     .eq("user_id", user.id);
 
   try {
-    const asset = await getSignedAssetUrl(capture.id, user.id);
-    const urlMetadata = capture.source_url
-      ? await fetchUrlMetadata(capture.source_url as string)
-      : null;
-
-    const result = await analyzeCapture({
-      captureId: capture.id,
-      sourceApp: capture.source_app,
-      url: capture.source_url,
-      text: capture.source_text,
-      assetUrl: asset?.url,
-      mimeType: asset?.mimeType,
-      route: body.route,
-      urlMetadata
-    });
+    const result = await analyzeCapture(analysisInput.analyzeInput);
 
     const { data: analysisRun, error: runError } = await supabase
       .from("analysis_runs")
       .insert({
         user_id: user.id,
         capture_id: capture.id,
+        model_route: result.route,
+        status: "succeeded",
+        is_canonical: true,
         provider: result.provider,
         model: result.model,
         prompt_version: result.promptVersion,
@@ -83,7 +51,12 @@ export async function POST(request: Request) {
         latency_ms: result.latencyMs,
         usage: result.usage,
         cost_estimate: result.costEstimate,
-        raw_output: result.analysis
+        raw_output: result.analysis,
+        raw_model_output: result.debug.rawModelOutput,
+        extracted_json: result.debug.extractedJson,
+        repaired_output: result.debug.repairedOutput,
+        schema_errors: result.debug.schemaErrors,
+        input_snapshot: result.debug.inputSnapshot
       })
       .select("*")
       .single();
@@ -177,7 +150,8 @@ export async function POST(request: Request) {
       .from("captures")
       .update({
         capture_type: result.analysis.capture_type,
-        title: capture.title || urlMetadata?.title || result.analysis.summary,
+        display_title: result.analysis.display_title,
+        title: capture.title || urlMetadata?.title || result.analysis.display_title,
         thumbnail_url: urlMetadata?.image ?? capture.thumbnail_url,
         analysis_state: result.analysis.needs_review ? "needs_review" : "ready",
         default_intent: result.analysis.default_intent.category,
@@ -195,6 +169,33 @@ export async function POST(request: Request) {
       analysisError instanceof Error
         ? analysisError.message
         : "Capture analysis failed";
+    if (analysisError instanceof CaptureAnalysisModelError) {
+      await supabase.from("analysis_runs").insert({
+        user_id: user.id,
+        capture_id: capture.id,
+        model_route: analysisError.route,
+        status: "failed",
+        is_canonical: true,
+        provider: analysisError.provider,
+        model: analysisError.model,
+        prompt_version: analysisError.promptVersion,
+        schema_version: analysisError.schemaVersion,
+        latency_ms: analysisError.latencyMs,
+        usage: analysisError.usage,
+        cost_estimate: analysisError.costEstimate,
+        raw_output:
+          analysisError.debug.repairedOutput ??
+          analysisError.debug.extractedJson ??
+          {},
+        raw_model_output: analysisError.debug.rawModelOutput,
+        extracted_json: analysisError.debug.extractedJson,
+        repaired_output: analysisError.debug.repairedOutput,
+        schema_errors: analysisError.debug.schemaErrors,
+        input_snapshot: analysisError.debug.inputSnapshot,
+        error_message: message
+      });
+    }
+
     await supabase
       .from("captures")
       .update({ analysis_state: "failed", analysis_error: message })
@@ -203,7 +204,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       {
-        error: message
+        error: message,
+        captureId: capture.id
       },
       { status: 500 }
     );

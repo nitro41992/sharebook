@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { loadCaptureAnalysisInput } from "../../../lib/analysis-input";
+import { analyzeCapture, CaptureAnalysisModelError } from "../../../lib/model-router";
 import { createSupabaseAdminClient, getCurrentUser } from "../../../lib/supabase-server";
 
 type EvalFixture = {
@@ -66,40 +68,87 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error?.message ?? "Fixture not found" }, { status: 404 });
   }
 
-  const analyzeResponse = await fetch(new URL("/api/analyze", request.url), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      cookie: request.headers.get("cookie") ?? ""
-    },
-    body: JSON.stringify({
-      captureId: fixture.capture_id,
-      route: body.modelRoute
-    })
+  const route = body.modelRoute ?? "high_precision_openai";
+  const analysisInput = await loadCaptureAnalysisInput(supabase, {
+    userId: user.id,
+    captureId: fixture.capture_id,
+    route
   });
 
-  const analyzeJson = await analyzeResponse.json();
-  if (!analyzeResponse.ok) {
-    return NextResponse.json(analyzeJson, { status: analyzeResponse.status });
+  let latestRun: { id: string } | null = null;
+  let analysis: AnalysisForScoring | null = null;
+
+  try {
+    const result = await analyzeCapture(analysisInput.analyzeInput);
+    analysis = result.analysis;
+    const { data: run, error: runError } = await supabase
+      .from("analysis_runs")
+      .insert({
+        user_id: user.id,
+        capture_id: fixture.capture_id,
+        model_route: result.route,
+        status: "succeeded",
+        is_canonical: false,
+        provider: result.provider,
+        model: result.model,
+        prompt_version: result.promptVersion,
+        schema_version: result.schemaVersion,
+        latency_ms: result.latencyMs,
+        usage: result.usage,
+        cost_estimate: result.costEstimate,
+        raw_output: result.analysis,
+        raw_model_output: result.debug.rawModelOutput,
+        extracted_json: result.debug.extractedJson,
+        repaired_output: result.debug.repairedOutput,
+        schema_errors: result.debug.schemaErrors,
+        input_snapshot: result.debug.inputSnapshot
+      })
+      .select("id")
+      .single();
+    if (runError) throw runError;
+    latestRun = run;
+  } catch (error) {
+    if (!(error instanceof CaptureAnalysisModelError)) {
+      const message = error instanceof Error ? error.message : "Eval analysis failed";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
+    const { data: run } = await supabase
+      .from("analysis_runs")
+      .insert({
+        user_id: user.id,
+        capture_id: fixture.capture_id,
+        model_route: error.route,
+        status: "failed",
+        is_canonical: false,
+        provider: error.provider,
+        model: error.model,
+        prompt_version: error.promptVersion,
+        schema_version: error.schemaVersion,
+        latency_ms: error.latencyMs,
+        usage: error.usage,
+        cost_estimate: error.costEstimate,
+        raw_output: error.debug.repairedOutput ?? error.debug.extractedJson ?? {},
+        raw_model_output: error.debug.rawModelOutput,
+        extracted_json: error.debug.extractedJson,
+        repaired_output: error.debug.repairedOutput,
+        schema_errors: error.debug.schemaErrors,
+        input_snapshot: error.debug.inputSnapshot,
+        error_message: error.message
+      })
+      .select("id")
+      .single();
+    latestRun = run;
+    return NextResponse.json({ error: error.message, analysisRun: run }, { status: 500 });
   }
 
-  const { data: latestRun } = await supabase
-    .from("analysis_runs")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("capture_id", fixture.capture_id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
-
-  const scored = scoreFixture(fixture, analyzeJson.analysis);
+  const scored = scoreFixture(fixture, analysis ?? {});
   const { data: evalRun, error: evalError } = await supabase
     .from("eval_runs")
     .insert({
       user_id: user.id,
       eval_fixture_id: fixture.id,
       analysis_run_id: latestRun?.id ?? null,
-      model_route: body.modelRoute ?? "default",
+      model_route: route,
       passed: scored.passed,
       score: scored.score
     })
@@ -110,5 +159,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: evalError.message }, { status: 500 });
   }
 
-  return NextResponse.json({ evalRun, analysis: analyzeJson.analysis });
+  return NextResponse.json({ evalRun, analysis });
 }

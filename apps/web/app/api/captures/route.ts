@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { CaptureTypeSchema } from "@sharebook/shared";
+import { CaptureTypeSchema, IntentCategorySchema } from "@sharebook/shared";
+import { loadCapturesForUser } from "../../lib/capture-loader";
 import { createSupabaseAdminClient, getCurrentUser } from "../../lib/supabase-server";
 
 function inferCaptureType(input: {
@@ -27,25 +28,13 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("captures")
-    .select(
-      `
-      *,
-      capture_assets(*),
-      captured_entities(*),
-      platform_evidence(*),
-      reminder_suggestions(*),
-      collection_suggestions(*)
-    `
-    )
-    .eq("user_id", user.id)
-    .neq("capture_state", "deleted")
-    .order("created_at", { ascending: false })
-    .limit(100);
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ captures: data ?? [] });
+  try {
+    const captures = await loadCapturesForUser(supabase, user.id);
+    return NextResponse.json({ captures });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load captures";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -75,6 +64,7 @@ export async function POST(request: Request) {
   }
 
   const supabase = createSupabaseAdminClient();
+  const displayTitle = title || sourceUrl || sourceText?.slice(0, 90) || "Untitled capture";
   const { data: capture, error: captureError } = await supabase
     .from("captures")
     .insert({
@@ -84,6 +74,7 @@ export async function POST(request: Request) {
       source_url: sourceUrl,
       source_text: sourceText,
       title,
+      display_title: displayTitle,
       analysis_state: "queued"
     })
     .select("*")
@@ -118,4 +109,45 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ capture });
+}
+
+export async function PATCH(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = (await request.json()) as {
+    captureId?: string;
+    currentSaveIntent?: string;
+  };
+  if (!body.captureId) {
+    return NextResponse.json({ error: "captureId is required" }, { status: 400 });
+  }
+
+  const currentSaveIntent = IntentCategorySchema.parse(body.currentSaveIntent);
+  const supabase = createSupabaseAdminClient();
+  const { data: capture, error: loadError } = await supabase
+    .from("captures")
+    .select("current_save_intent")
+    .eq("user_id", user.id)
+    .eq("id", body.captureId)
+    .single();
+
+  if (loadError || !capture) {
+    return NextResponse.json({ error: loadError?.message ?? "Capture not found" }, { status: 404 });
+  }
+
+  const { data: updated, error } = await supabase
+    .from("captures")
+    .update({
+      current_save_intent: currentSaveIntent,
+      intent_corrected_from: capture.current_save_intent,
+      intent_corrected_at: new Date().toISOString()
+    })
+    .eq("user_id", user.id)
+    .eq("id", body.captureId)
+    .select("*")
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ capture: updated });
 }

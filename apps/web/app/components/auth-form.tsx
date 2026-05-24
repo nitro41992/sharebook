@@ -5,17 +5,22 @@ import { createBrowserClient } from "@supabase/ssr";
 
 export function AuthForm() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const showDevAuth = process.env.NODE_ENV !== "production";
 
-  async function signIn() {
-    setLoading(true);
-    setMessage("");
-    const supabase = createBrowserClient(
+  function getSupabase() {
+    return createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
+  }
+
+  async function sendMagicLink() {
+    setLoading(true);
+    setMessage("");
+    const supabase = getSupabase();
 
     const { error } = await supabase.auth.signInWithOtp({
       email,
@@ -26,6 +31,21 @@ export function AuthForm() {
 
     setLoading(false);
     setMessage(error ? error.message : "Check your email for the sign-in link.");
+  }
+
+  async function signInWithPassword() {
+    setLoading(true);
+    setMessage("");
+    const supabase = getSupabase();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    window.location.reload();
   }
 
   function devSignIn() {
@@ -54,8 +74,21 @@ export function AuthForm() {
             placeholder="you@example.com"
           />
         </label>
-        <button className="button" disabled={loading || !email} onClick={signIn}>
-          {loading ? "Sending..." : "Send magic link"}
+        <label className="field">
+          <span className="label">Password</span>
+          <input
+            className="input"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Use a password after you set one"
+          />
+        </label>
+        <button className="button" disabled={loading || !email || !password} onClick={signInWithPassword}>
+          {loading ? "Signing in..." : "Sign in with password"}
+        </button>
+        <button className="button secondary" disabled={loading || !email} onClick={sendMagicLink}>
+          Send magic link
         </button>
         {showDevAuth ? (
           <button className="button secondary" disabled={loading || !email} onClick={devSignIn}>

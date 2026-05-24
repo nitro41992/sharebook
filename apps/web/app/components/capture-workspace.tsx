@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Search
 } from "lucide-react";
+import { createBrowserClient } from "@supabase/ssr";
 import { intentCategories, intentLabels, type IntentCategory } from "@sharebook/shared";
 
 type AnalysisRun = {
@@ -253,11 +254,29 @@ function reminderBlankReason(capture: Capture, run?: AnalysisRun) {
   return "The latest run contained reminder-like output, but none is currently stored. Inspect output for schema or persistence details.";
 }
 
-export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture[] }) {
+export function CaptureWorkspace({
+  initialCaptures,
+  userEmail
+}: {
+  initialCaptures: Capture[];
+  userEmail: string;
+}) {
+  const supabase = useMemo(
+    () =>
+      createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
   const [captures, setCaptures] = useState(initialCaptures);
   const [selectedId, setSelectedId] = useState(initialCaptures[0]?.id ?? "");
   const [creating, setCreating] = useState(false);
   const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [accountStatus, setAccountStatus] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [tab, setTab] = useState<InspectorTab>("review");
@@ -672,6 +691,36 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
     loadFixtures(selected.id);
   }, [loadFixtures, selected]);
 
+  async function setAccountPassword() {
+    setAccountStatus("");
+    if (newPassword.length < 8) {
+      setAccountStatus("Use at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setAccountStatus("Passwords do not match.");
+      return;
+    }
+
+    setSavingPassword(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setSavingPassword(false);
+
+    if (error) {
+      setAccountStatus(error.message);
+      return;
+    }
+
+    setNewPassword("");
+    setConfirmPassword("");
+    setAccountStatus("Password saved. You can now sign in with email and password.");
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    window.location.reload();
+  }
+
   return (
     <div className="app-shell">
       <aside className="rail">
@@ -683,6 +732,40 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
           <p className="muted small">
             Phase 0A validates whether AI can preserve why a capture mattered.
           </p>
+        </div>
+        <div className="divider" />
+        <div className="section capture-form">
+          <div>
+            <div className="h2">Account</div>
+            <p className="muted small">{userEmail || "Signed in"}</p>
+          </div>
+          <label className="field">
+            <span className="label">New password</span>
+            <input
+              className="input"
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              placeholder="At least 8 characters"
+            />
+          </label>
+          <label className="field">
+            <span className="label">Confirm password</span>
+            <input
+              className="input"
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              placeholder="Repeat password"
+            />
+          </label>
+          <button className="button secondary" disabled={savingPassword} onClick={setAccountPassword}>
+            {savingPassword ? "Saving..." : "Set password"}
+          </button>
+          <button className="button ghost" onClick={signOut}>
+            Sign out
+          </button>
+          {accountStatus ? <p className="muted small">{accountStatus}</p> : null}
         </div>
         <div className="divider" />
         <form

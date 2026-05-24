@@ -173,11 +173,12 @@ function StatusPill({ state }: { state: string }) {
 
 function AuthScreen() {
   const [email, setEmail] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [password, setPassword] = useState("");
+  const [loadingAction, setLoadingAction] = useState<"password" | "magic" | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
 
   async function sendMagicLink() {
-    setLoading(true);
+    setLoadingAction("magic");
     const result = await supabase.auth.signInWithOtp({
       email,
       options: {
@@ -185,7 +186,7 @@ function AuthScreen() {
         shouldCreateUser: false
       }
     });
-    setLoading(false);
+    setLoadingAction(null);
 
     if (result.error) {
       Alert.alert("Could not send link", result.error.message);
@@ -193,6 +194,18 @@ function AuthScreen() {
     }
     setSentTo(email);
   }
+
+  async function signInWithPassword() {
+    setLoadingAction("password");
+    const result = await supabase.auth.signInWithPassword({ email, password });
+    setLoadingAction(null);
+
+    if (result.error) {
+      Alert.alert("Could not sign in", result.error.message);
+    }
+  }
+
+  const loading = loadingAction !== null;
 
   return (
     <View style={styles.safe}>
@@ -223,18 +236,42 @@ function AuthScreen() {
               style={styles.input}
               value={email}
             />
+            <TextInput
+              autoCapitalize="none"
+              autoComplete="password"
+              onChangeText={setPassword}
+              placeholder="Password"
+              placeholderTextColor={colors.muted}
+              secureTextEntry
+              style={styles.input}
+              value={password}
+            />
             <Pressable
-              disabled={loading || !email}
-              onPress={sendMagicLink}
+              disabled={loading || !email || !password}
+              onPress={signInWithPassword}
               style={({ pressed }) => [
                 styles.primaryButton,
                 styles.authButton,
                 (pressed || loading) && styles.pressed,
-                !email && styles.disabled
+                (!email || !password) && styles.disabled
               ]}
             >
               <Text style={styles.primaryButtonText}>
-                {loading ? "Sending..." : "Send magic link"}
+                {loadingAction === "password" ? "Signing in..." : "Sign in with password"}
+              </Text>
+            </Pressable>
+            <Pressable
+              disabled={loading || !email}
+              onPress={sendMagicLink}
+              style={({ pressed }) => [
+                styles.secondaryButton,
+                styles.authButton,
+                (pressed || loadingAction === "magic") && styles.pressed,
+                !email && styles.disabled
+              ]}
+            >
+              <Text style={styles.secondaryButtonText}>
+                {loadingAction === "magic" ? "Sending..." : "Send magic link"}
               </Text>
             </Pressable>
             {sentTo ? (
@@ -266,6 +303,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  const [showAccount, setShowAccount] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
 
   const selected = useMemo(
     () => captures.find((capture) => capture.id === selectedId) ?? null,
@@ -442,6 +483,31 @@ export default function App() {
     await supabase.auth.signOut();
     setCaptures([]);
     setSelectedId(null);
+    setShowAccount(false);
+  }
+
+  async function setAccountPassword() {
+    if (newPassword.length < 8) {
+      Alert.alert("Password too short", "Use at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      Alert.alert("Passwords do not match", "Enter the same password twice.");
+      return;
+    }
+
+    setSavingPassword(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setSavingPassword(false);
+
+    if (error) {
+      Alert.alert("Could not set password", error.message);
+      return;
+    }
+
+    setNewPassword("");
+    setConfirmPassword("");
+    Alert.alert("Password saved", "You can now sign in with email and password.");
   }
 
   if (loading && !session) {
@@ -463,9 +529,14 @@ export default function App() {
             <Text style={styles.kicker}>Sharebook 0A</Text>
             <Text style={styles.screenTitle}>Phone capture</Text>
           </View>
-          <Pressable onPress={signOut} style={styles.textButton}>
-            <Text style={styles.textButtonLabel}>Sign out</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable onPress={() => setShowAccount((current) => !current)} style={styles.textButton}>
+              <Text style={styles.textButtonLabel}>Account</Text>
+            </Pressable>
+            <Pressable onPress={signOut} style={styles.textButton}>
+              <Text style={styles.textButtonLabel}>Sign out</Text>
+            </Pressable>
+          </View>
         </View>
 
         <ScrollView
@@ -474,6 +545,49 @@ export default function App() {
             <RefreshControl refreshing={loading} onRefresh={() => refreshCaptures()} />
           }
         >
+          {showAccount ? (
+            <View style={styles.accountPanel}>
+              <Text style={styles.sectionTitle}>Set password</Text>
+              <Text style={styles.bodyText}>
+                Add a password to this same account so magic links stay optional.
+              </Text>
+              <TextInput
+                autoCapitalize="none"
+                autoComplete="password-new"
+                onChangeText={setNewPassword}
+                placeholder="New password"
+                placeholderTextColor={colors.muted}
+                secureTextEntry
+                style={styles.input}
+                value={newPassword}
+              />
+              <TextInput
+                autoCapitalize="none"
+                autoComplete="password-new"
+                onChangeText={setConfirmPassword}
+                placeholder="Confirm password"
+                placeholderTextColor={colors.muted}
+                secureTextEntry
+                style={styles.input}
+                value={confirmPassword}
+              />
+              <Pressable
+                disabled={savingPassword}
+                onPress={setAccountPassword}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  styles.fullWidthButton,
+                  pressed && styles.pressed,
+                  savingPassword && styles.disabled
+                ]}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {savingPassword ? "Saving..." : "Set password"}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           <View style={styles.capturePanel}>
             <Text style={styles.sectionTitle}>New capture</Text>
             <TextInput
@@ -664,6 +778,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16
   },
+  headerActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 4
+  },
   content: {
     padding: 20,
     paddingBottom: 40
@@ -784,6 +903,13 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 14
   },
+  accountPanel: {
+    backgroundColor: colors.panel,
+    borderRadius: 16,
+    gap: 12,
+    marginBottom: 16,
+    padding: 14
+  },
   sectionTitle: {
     color: colors.ink,
     fontSize: 18,
@@ -803,6 +929,9 @@ const styles = StyleSheet.create({
   },
   fullWidth: {
     marginTop: 18
+  },
+  fullWidthButton: {
+    width: "100%"
   },
   captureRow: {
     borderBottomColor: colors.line,

@@ -19,5 +19,10 @@ export default async function Home() {
   const supabase = createSupabaseAdminClient();
   const data = await loadCapturesForUser(supabase, user.id);
 
-  return <CaptureWorkspace initialCaptures={(data ?? []) as Parameters<typeof CaptureWorkspace>[0]["initialCaptures"]} />;
+  return (
+    <CaptureWorkspace
+      initialCaptures={(data ?? []) as Parameters<typeof CaptureWorkspace>[0]["initialCaptures"]}
+      userEmail={user.email ?? ""}
+    />
+  );
 }

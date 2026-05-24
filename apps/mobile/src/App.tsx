@@ -265,6 +265,33 @@ function parseFeedbackNotes(notes: string | null) {
   }
 }
 
+function intentName(intent?: string | null) {
+  if (!intent) return "None";
+  return intentCategories.includes(intent as IntentCategory)
+    ? intentLabels[intent as IntentCategory]
+    : intent;
+}
+
+function intentListNames(intents: string[]) {
+  return intents.map(intentName).join(", ");
+}
+
+function evalScoreNotes(score: EvalRun["score"]) {
+  const notes: string[] = [];
+  if (score.actual_intent) notes.push(`Actual intent: ${intentName(score.actual_intent)}`);
+  if (score.bad_intent_hit) notes.push("Bad intent hit");
+  if (score.missing_entities?.length) notes.push(`Missing entities: ${score.missing_entities.join(", ")}`);
+  if (score.missing_reminders?.length) {
+    notes.push(`Missing reminders: ${score.missing_reminders.join(", ")}`);
+  }
+  if (score.past_reminders?.length) notes.push(`Past reminders: ${score.past_reminders.join(", ")}`);
+  if (score.search_misses?.length) notes.push(`Search misses: ${score.search_misses.join(", ")}`);
+  if (score.broad_collection_suggestions?.length) {
+    notes.push(`Broad collections: ${score.broad_collection_suggestions.join(", ")}`);
+  }
+  return notes;
+}
+
 function getAuthCallbackParams(url: string) {
   const params = new URLSearchParams();
   const parsed = new URL(url);
@@ -918,7 +945,7 @@ export default function App() {
 
   async function saveFeedback() {
     if (!session || !selected) return;
-    setFixtureStatus(editingFeedbackId ? "Updating feedback..." : "Saving feedback...");
+    setFixtureStatus(editingFeedbackId ? "Updating eval..." : "Saving eval...");
     const feedbackNotes = JSON.stringify({
       kind: "mini_feedback",
       looksRight: feedbackDraft.looksRight,
@@ -946,12 +973,13 @@ export default function App() {
         body: JSON.stringify(payload)
       });
       setFixtureStatus(
-        `${editingFeedbackId ? "Updated" : "Saved"} feedback ${json.fixture?.id?.slice(0, 8) ?? ""}`
+        `${editingFeedbackId ? "Updated" : "Saved"} eval ${json.fixture?.id?.slice(0, 8) ?? ""}`
       );
       setEditingFeedbackId("");
       await loadFixtures(selected.id);
+      setDetailTab("quality");
     } catch (error) {
-      setFixtureStatus(error instanceof Error ? error.message : "Could not save feedback");
+      setFixtureStatus(error instanceof Error ? error.message : "Could not save eval");
     }
   }
 
@@ -975,27 +1003,27 @@ export default function App() {
       searchQueries: listToLines(fixture.search_queries),
       comment: meta?.comment ?? fixture.notes ?? ""
     });
-    setFixtureStatus(`Editing feedback ${fixture.id.slice(0, 8)}`);
+    setFixtureStatus(`Editing eval ${fixture.id.slice(0, 8)}`);
   }
 
   async function deleteFeedback(fixtureId: string) {
     if (!session || !selected) return;
-    Alert.alert("Delete feedback?", "This removes the saved eval fixture.", [
+    Alert.alert("Delete eval?", "This removes the saved eval fixture.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          setFixtureStatus("Deleting feedback...");
+          setFixtureStatus("Deleting eval...");
           try {
             await apiFetch(`/api/evals/fixtures?fixtureId=${encodeURIComponent(fixtureId)}`, session, {
               method: "DELETE"
             });
             if (editingFeedbackId === fixtureId) resetFeedbackDraft(selected);
-            setFixtureStatus("Deleted feedback");
+            setFixtureStatus("Deleted eval");
             await loadFixtures(selected.id);
           } catch (error) {
-            setFixtureStatus(error instanceof Error ? error.message : "Could not delete feedback");
+            setFixtureStatus(error instanceof Error ? error.message : "Could not delete eval");
           }
         }
       }
@@ -1409,7 +1437,7 @@ export default function App() {
       <View style={styles.detailStack}>
         <View style={styles.panel}>
           <View style={styles.captureRowTop}>
-            <Text style={styles.subhead}>Mini feedback</Text>
+            <Text style={styles.subhead}>Eval fixture</Text>
             {editingFeedbackId ? <Text style={[styles.pill, styles.pillWarn]}>editing</Text> : null}
           </View>
           <Pressable
@@ -1521,7 +1549,7 @@ export default function App() {
           <View style={styles.row}>
             <Pressable onPress={saveFeedback} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>
-                {editingFeedbackId ? "Update feedback" : "Save feedback"}
+                {editingFeedbackId ? "Update eval" : "Save eval"}
               </Text>
             </Pressable>
             {editingFeedbackId ? (
@@ -1535,18 +1563,29 @@ export default function App() {
         </View>
 
         <View style={styles.panel}>
-          <Text style={styles.subhead}>Saved feedback</Text>
+          <View style={styles.captureRowTop}>
+            <Text style={styles.subhead}>Saved evals</Text>
+            <Text style={styles.meta}>{fixtures.length} total</Text>
+          </View>
           {fixtures.length ? (
             fixtures.map((fixture) => {
               const meta = parseFeedbackNotes(fixture.notes);
+              const latestRun = fixture.eval_runs?.[0] ?? null;
               return (
-                <View style={styles.plainBlock} key={fixture.id}>
-                  <Text style={styles.blockTitle}>
-                    {fixture.label || `Feedback ${fixture.id.slice(0, 8)}`}
-                  </Text>
-                  {fixture.expected_intent ? (
-                    <Text style={styles.intentText}>{intentLabels[fixture.expected_intent]}</Text>
-                  ) : null}
+                <View style={styles.evalCard} key={fixture.id}>
+                  <View style={styles.captureRowTop}>
+                    <Text style={styles.blockTitle}>
+                      {fixture.label || `Eval ${fixture.id.slice(0, 8)}`}
+                    </Text>
+                    {latestRun ? (
+                      <Text style={[styles.pill, latestRun.passed ? styles.pillReady : styles.pillWarn]}>
+                        {latestRun.passed ? "pass" : "review"}
+                      </Text>
+                    ) : (
+                      <Text style={[styles.pill, styles.pillNeutral]}>untested</Text>
+                    )}
+                  </View>
+                  <Text style={styles.intentText}>Expected: {intentName(fixture.expected_intent)}</Text>
                   {meta?.issues?.length ? (
                     <Text style={styles.meta}>Issues: {meta.issues.join(", ")}</Text>
                   ) : meta?.looksRight ? (
@@ -1555,55 +1594,48 @@ export default function App() {
                   {meta?.comment ? <Text style={styles.bodyText}>{meta.comment}</Text> : null}
                   {fixture.acceptable_intents.length ? (
                     <Text style={styles.meta}>
-                      Acceptable:{" "}
-                      {fixture.acceptable_intents
-                        .map((intent) =>
-                          intentCategories.includes(intent as IntentCategory)
-                            ? intentLabels[intent as IntentCategory]
-                            : intent
-                        )
-                        .join(", ")}
+                      Acceptable: {intentListNames(fixture.acceptable_intents)}
                     </Text>
                   ) : null}
                   {fixture.bad_intents.length ? (
-                    <Text style={styles.meta}>
-                      Bad:{" "}
-                      {fixture.bad_intents
-                        .map((intent) =>
-                          intentCategories.includes(intent as IntentCategory)
-                            ? intentLabels[intent as IntentCategory]
-                            : intent
-                        )
-                        .join(", ")}
-                    </Text>
+                    <Text style={styles.meta}>Bad: {intentListNames(fixture.bad_intents)}</Text>
                   ) : null}
                   <Text style={styles.meta}>
-                    {fixture.required_entities.length} entities · {fixture.expected_reminders.length} reminders ·{" "}
+                    Checks {fixture.required_entities.length} entities · {fixture.expected_reminders.length} reminders ·{" "}
                     {fixture.search_queries.length} search queries
                   </Text>
                   <View style={styles.wrapRow}>
-                    <PillButton label="Test current prompt" onPress={() => runEval(fixture.id)} />
-                    <PillButton label="Edit" onPress={() => editFeedback(fixture)} />
-                    <PillButton label="Delete" onPress={() => deleteFeedback(fixture.id)} />
+                    <PillButton label="Run eval" onPress={() => runEval(fixture.id)} />
+                    <PillButton label="Edit eval" onPress={() => editFeedback(fixture)} />
+                    <PillButton label="Delete eval" onPress={() => deleteFeedback(fixture.id)} />
                   </View>
-                  {fixture.eval_runs?.slice(0, 3).map((run) => (
-                    <View style={styles.evalRun} key={run.id}>
-                      <Text style={run.passed ? styles.intentText : styles.warnText}>
-                        {run.passed ? "passed" : "review"} · {run.model_route}
-                      </Text>
-                      <Text style={styles.meta}>
-                        intent {run.score.intent_pass ? "ok" : "miss"} · entities{" "}
-                        {run.score.entity_pass ? "ok" : "miss"} · reminders{" "}
-                        {run.score.reminder_pass ? "ok" : "miss"} · search{" "}
-                        {run.score.search_pass ? "ok" : "miss"}
-                      </Text>
-                    </View>
-                  ))}
+                  <Text style={styles.label}>Recent eval runs</Text>
+                  {fixture.eval_runs?.length ? (
+                    fixture.eval_runs.slice(0, 3).map((run) => {
+                      const notes = evalScoreNotes(run.score);
+                      return (
+                        <View style={styles.evalRun} key={run.id}>
+                          <Text style={run.passed ? styles.intentText : styles.warnText}>
+                            {run.passed ? "Passed" : "Needs review"} · {run.model_route}
+                          </Text>
+                          <Text style={styles.meta}>
+                            intent {run.score.intent_pass ? "ok" : "miss"} · entities{" "}
+                            {run.score.entity_pass ? "ok" : "miss"} · reminders{" "}
+                            {run.score.reminder_pass ? "ok" : "miss"} · search{" "}
+                            {run.score.search_pass ? "ok" : "miss"}
+                          </Text>
+                          {notes.length ? <Text style={styles.meta}>{notes.join("\n")}</Text> : null}
+                        </View>
+                      );
+                    })
+                  ) : (
+                    <Text style={styles.empty}>No eval runs yet. Run this eval to compare Mini output.</Text>
+                  )}
                 </View>
               );
             })
           ) : (
-            <Text style={styles.empty}>No feedback saved for this capture yet.</Text>
+            <Text style={styles.empty}>No evals saved for this capture yet.</Text>
           )}
         </View>
       </View>
@@ -2202,14 +2234,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     paddingVertical: 10
   },
+  evalCard: {
+    backgroundColor: colors.input,
+    borderRadius: 12,
+    gap: 6,
+    marginTop: 10,
+    padding: 12
+  },
   blockTitle: {
     color: colors.ink,
+    flex: 1,
     fontSize: 16,
     fontWeight: "800",
     lineHeight: 22
   },
   evalRun: {
-    backgroundColor: colors.input,
+    backgroundColor: colors.panel,
     borderRadius: 10,
     marginTop: 8,
     padding: 10

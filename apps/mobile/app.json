@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Sharebook",
+    "slug": "sharebook",
+    "scheme": "sharebook",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "android": {
+      "package": "app.sharebook.dogfood",
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-sharing",
+        {
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": ["text/*", "image/*"],
+            "multipleShareMimeTypes": ["image/*"]
+          }
+        }
+      ]
+    ]
+  }
+}

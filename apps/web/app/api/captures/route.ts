@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { CaptureTypeSchema, IntentCategorySchema } from "@sharebook/shared";
-import { loadCapturesForUser } from "../../lib/capture-loader";
+import {
+  loadCaptureForUser,
+  loadCaptureSummariesForUser,
+  loadCapturesForUser
+} from "../../lib/capture-loader";
 import { createSupabaseAdminClient, getCurrentUser } from "../../lib/supabase-server";
 
 function inferCaptureType(input: {
@@ -23,12 +27,47 @@ function inferCaptureType(input: {
   return "unknown";
 }
 
-export async function GET() {
-  const user = await getCurrentUser();
+function inferSourceApp(sourceUrl?: string | null) {
+  if (!sourceUrl) return null;
+  if (/instagram\.com/i.test(sourceUrl)) return "Instagram";
+  if (/tiktok\.com/i.test(sourceUrl)) return "TikTok";
+  if (/reddit\.com/i.test(sourceUrl)) return "Reddit";
+  if (/youtube\.com|youtu\.be/i.test(sourceUrl)) return "YouTube";
+  if (/maps\.app\.goo\.gl|google\.[^/]+\/maps|maps\.google\./i.test(sourceUrl)) return "Maps";
+  if (/x\.com|twitter\.com/i.test(sourceUrl)) return "X";
+  return "Browser";
+}
+
+export async function GET(request: Request) {
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const url = new URL(request.url);
+  const view = url.searchParams.get("view");
+  const captureId = url.searchParams.get("captureId");
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Number(limitParam) : undefined;
+  const cursor = url.searchParams.get("cursor");
   const supabase = createSupabaseAdminClient();
   try {
+    if (view === "summary") {
+      const result = await loadCaptureSummariesForUser(supabase, {
+        userId: user.id,
+        limit: typeof limit === "number" && Number.isFinite(limit) ? limit : undefined,
+        cursor
+      });
+      return NextResponse.json(result);
+    }
+
+    if (view === "detail") {
+      if (!captureId) {
+        return NextResponse.json({ error: "captureId is required" }, { status: 400 });
+      }
+      const capture = await loadCaptureForUser(supabase, { userId: user.id, captureId });
+      if (!capture) return NextResponse.json({ error: "Capture not found" }, { status: 404 });
+      return NextResponse.json({ capture });
+    }
+
     const captures = await loadCapturesForUser(supabase, user.id);
     return NextResponse.json({ captures });
   } catch (error) {
@@ -38,13 +77,13 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const formData = await request.formData();
   const sourceUrl = formData.get("sourceUrl")?.toString().trim() || null;
   const sourceText = formData.get("sourceText")?.toString().trim() || null;
-  const sourceApp = formData.get("sourceApp")?.toString().trim() || null;
+  const sourceApp = formData.get("sourceApp")?.toString().trim() || inferSourceApp(sourceUrl);
   const title = formData.get("title")?.toString().trim() || null;
   const file = formData.get("asset");
   const asset = file instanceof File && file.size > 0 ? file : null;
@@ -112,7 +151,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const user = await getCurrentUser();
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = (await request.json()) as {

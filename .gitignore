@@ -12,3 +12,7 @@ coverage
 apps/web/.next
 apps/web/.env.local
 apps/web/.env.*.local
+apps/mobile/.env
+apps/mobile/.env.local
+apps/mobile/.env.*.local
+apps/mobile/.expo

@@ -8,6 +8,12 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @sharebook/web",
+    "dev:web": "npm run dev --workspace @sharebook/web",
+    "dev:mobile": "npm run dev --workspace @sharebook/mobile --",
+    "dev:mobile:lan": "npm run dev --workspace @sharebook/mobile -- --host lan",
+    "android": "npm run android --workspace @sharebook/mobile",
+    "device": "npm run device --workspace @sharebook/mobile --",
+    "build:mobile:dogfood": "npm run build:dogfood --workspace @sharebook/mobile",
     "build": "npm run build --workspace @sharebook/web",
     "lint": "npm run lint --workspace @sharebook/web",
     "typecheck": "npm run typecheck --workspaces --if-present",

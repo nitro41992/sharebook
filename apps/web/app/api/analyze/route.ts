@@ -3,6 +3,59 @@ import { loadCaptureAnalysisInput } from "../../lib/analysis-input";
 import { buildSearchDocument } from "../../lib/search";
 import { analyzeCapture, CaptureAnalysisModelError } from "../../lib/model-router";
 import { createSupabaseAdminClient, getCurrentUser } from "../../lib/supabase-server";
+import { intentCategories, intentLabels, type CaptureAnalysis } from "@sharebook/shared";
+
+function normalizeCollectionName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+const intentCollectionNames = new Set(
+  intentCategories.flatMap((category) => [
+    normalizeCollectionName(category),
+    normalizeCollectionName(category.replace(/_/g, " ")),
+    normalizeCollectionName(intentLabels[category])
+  ])
+);
+
+function normalizeSuggestedCollections(
+  analysis: CaptureAnalysis,
+  existingCollections: Array<{ name: string }>
+): CaptureAnalysis {
+  const existingByName = new Map(
+    existingCollections.map((collection) => [
+      normalizeCollectionName(collection.name),
+      collection.name
+    ])
+  );
+  const seen = new Set<string>();
+  const suggested_collections = analysis.suggested_collections
+    .map((collection) => {
+      const normalized = normalizeCollectionName(collection.name);
+      const existingName = existingByName.get(normalized);
+      return {
+        ...collection,
+        name: existingName ?? collection.name
+      };
+    })
+    .filter((collection) => {
+      const normalized = normalizeCollectionName(collection.name);
+      if (!normalized || intentCollectionNames.has(normalized) || seen.has(normalized)) {
+        return false;
+      }
+      seen.add(normalized);
+      return true;
+    });
+
+  return {
+    ...analysis,
+    suggested_collections
+  };
+}
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
@@ -35,6 +88,10 @@ export async function POST(request: Request) {
 
   try {
     const result = await analyzeCapture(analysisInput.analyzeInput);
+    const analysis = normalizeSuggestedCollections(
+      result.analysis,
+      analysisInput.analyzeInput.userContext?.existingCollections ?? []
+    );
 
     const { data: analysisRun, error: runError } = await supabase
       .from("analysis_runs")
@@ -69,9 +126,9 @@ export async function POST(request: Request) {
     await supabase.from("collection_suggestions").delete().eq("capture_id", capture.id);
     await supabase.from("search_documents").delete().eq("capture_id", capture.id);
 
-    if (result.analysis.entities.length) {
+    if (analysis.entities.length) {
       await supabase.from("captured_entities").insert(
-        result.analysis.entities.map((entity) => ({
+        analysis.entities.map((entity) => ({
           user_id: user.id,
           capture_id: capture.id,
           analysis_run_id: analysisRun.id,
@@ -85,9 +142,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (result.analysis.platform_evidence.length) {
+    if (analysis.platform_evidence.length) {
       await supabase.from("platform_evidence").insert(
-        result.analysis.platform_evidence.map((evidence) => ({
+        analysis.platform_evidence.map((evidence) => ({
           user_id: user.id,
           capture_id: capture.id,
           analysis_run_id: analysisRun.id,
@@ -99,9 +156,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (result.analysis.suggested_reminders.length) {
+    if (analysis.suggested_reminders.length) {
       await supabase.from("reminder_suggestions").insert(
-        result.analysis.suggested_reminders.map((reminder) => ({
+        analysis.suggested_reminders.map((reminder) => ({
           user_id: user.id,
           capture_id: capture.id,
           analysis_run_id: analysisRun.id,
@@ -113,9 +170,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (result.analysis.suggested_collections.length) {
+    if (analysis.suggested_collections.length) {
       await supabase.from("collection_suggestions").insert(
-        result.analysis.suggested_collections.map((collection) => ({
+        analysis.suggested_collections.map((collection) => ({
           user_id: user.id,
           capture_id: capture.id,
           analysis_run_id: analysisRun.id,
@@ -129,14 +186,14 @@ export async function POST(request: Request) {
     const document = buildSearchDocument({
       title: capture.title || urlMetadata?.title,
       sourceText: capture.source_text,
-      summary: result.analysis.summary,
-      intent: result.analysis.default_intent.category,
+      summary: analysis.summary,
+      intent: analysis.default_intent.category,
       contextNote: capture.context_note,
-      entities: result.analysis.entities.map((entity) => ({
+      entities: analysis.entities.map((entity) => ({
         type: entity.type,
         name: entity.name
       })),
-      searchPhrases: result.analysis.search_phrases
+      searchPhrases: analysis.search_phrases
     });
 
     await supabase.from("search_documents").insert({
@@ -149,20 +206,20 @@ export async function POST(request: Request) {
     await supabase
       .from("captures")
       .update({
-        capture_type: result.analysis.capture_type,
-        display_title: result.analysis.display_title,
-        title: capture.title || urlMetadata?.title || result.analysis.display_title,
+        capture_type: analysis.capture_type,
+        display_title: analysis.display_title,
+        title: capture.title || urlMetadata?.title || analysis.display_title,
         thumbnail_url: urlMetadata?.image ?? capture.thumbnail_url,
-        analysis_state: result.analysis.needs_review ? "needs_review" : "ready",
-        default_intent: result.analysis.default_intent.category,
-        default_intent_confidence: result.analysis.default_intent.confidence,
-        current_save_intent: result.analysis.default_intent.category,
-        intent_rationale: result.analysis.default_intent.rationale
+        analysis_state: analysis.needs_review ? "needs_review" : "ready",
+        default_intent: analysis.default_intent.category,
+        default_intent_confidence: analysis.default_intent.confidence,
+        current_save_intent: analysis.default_intent.category,
+        intent_rationale: analysis.default_intent.rationale
       })
       .eq("id", capture.id)
       .eq("user_id", user.id);
 
-    return NextResponse.json({ analysis: result.analysis, analysisRun });
+    return NextResponse.json({ analysis, analysisRun });
   } catch (analysisError) {
     console.error("Capture analysis failed", analysisError);
     const message =

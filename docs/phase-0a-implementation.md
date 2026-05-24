@@ -12,6 +12,8 @@ Phase 0A is a web-only concept bench. It validates Sharebook's AI extraction and
 - Review inbox UI with analysis state, intent chips, entities, reminder suggestions, and collection suggestions.
 - Full-text search over generated search documents.
 - Eval fixture and eval run tables plus a scoring route.
+- All-feedback quality report that groups checkbox issues and written product-signal comments.
+- Lightweight Analyzer Context passed into Capture Analysis from recent Captures, prior Reminder suggestions, existing Collections, recent Collection suggestions, current date/time, and timezone.
 
 ## Required Environment
 
@@ -45,3 +47,13 @@ The migration creates:
 - `gemini_flash_lite`: cheaper Gemini route.
 
 The model router is intentionally thin. Phase 0A should first validate extraction quality, then expand routing only when the eval harness makes comparison useful.
+
+## Analyzer Context
+
+Phase 0A includes a deliberately small Analyzer Context pack so the analyzer can use prior signals without reading the user's full history. The current scaffold uses bounded recent slices as a proof point, but ADR 0006 records the durable decision: Analyzer Context should evolve toward relevance-ranked retrieval, accepted/rejected user actions, existing Collections, and compact preference summaries under a strict budget.
+
+Analyzer Context is weak evidence. It should improve reminder timing, collection reuse, and recurring-preference detection, but it should not cause the model to invent facts that are not present in the current Capture or repeated user behavior.
+
+## Feedback Report
+
+The all-feedback report is the operating surface for turning reviewed submissions into analyzer work. It should show not only issue counts, but also product-signal themes from written comments, such as missing user-history context, duplicate or too-broad Collections, reminder timing, and unsupported speculation.

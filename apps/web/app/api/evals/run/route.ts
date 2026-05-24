@@ -3,6 +3,7 @@ import { loadCaptureAnalysisInput } from "../../../lib/analysis-input";
 import { analyzeCapture, CaptureAnalysisModelError } from "../../../lib/model-router";
 import { searchCapturesForUser } from "../../../lib/search";
 import { createSupabaseAdminClient, getCurrentUser } from "../../../lib/supabase-server";
+import { intentCategories, intentLabels } from "@sharebook/shared";
 
 type EvalFixture = {
   expected_intent: string | null;
@@ -20,15 +21,55 @@ type AnalysisForScoring = {
   };
   entities?: Array<{
     name: string;
+    normalized_name?: string | null;
   }>;
   suggested_reminders?: Array<{
     trigger_value?: string;
     rationale?: string;
   }>;
+  suggested_collections?: Array<{
+    name?: string;
+  }>;
+  search_phrases?: string[];
 };
 
 function includesText(haystack: string, needle: string) {
   return haystack.toLowerCase().includes(needle.toLowerCase());
+}
+
+function normalizeText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function looselyMatches(haystack: string, needle: string) {
+  const normalizedHaystack = normalizeText(haystack);
+  const normalizedNeedle = normalizeText(needle);
+  if (!normalizedHaystack || !normalizedNeedle) return false;
+  return (
+    normalizedHaystack === normalizedNeedle ||
+    normalizedHaystack.includes(normalizedNeedle) ||
+    normalizedNeedle.includes(normalizedHaystack)
+  );
+}
+
+const broadIntentCollectionNames = new Set(
+  intentCategories.flatMap((category) => [
+    normalizeText(category),
+    normalizeText(category.replace(/_/g, " ")),
+    normalizeText(intentLabels[category])
+  ])
+);
+
+function parseReminderDate(value: string | undefined) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  return new Date(parsed);
 }
 
 async function scoreFixture(input: {
@@ -42,26 +83,38 @@ async function scoreFixture(input: {
   const acceptable = new Set([expectedIntent, ...(fixture.acceptable_intents ?? [])].filter(Boolean));
   const bad = new Set(fixture.bad_intents ?? []);
   const actualIntent = analysis?.default_intent?.category ?? null;
-  const entityNames = new Set(
-    (analysis?.entities ?? []).map((entity) => String(entity.name).toLowerCase())
+  const entityNames = (analysis?.entities ?? []).flatMap((entity) =>
+    [entity.name, entity.normalized_name].filter((value): value is string => Boolean(value))
   );
   const requiredEntities = fixture.required_entities ?? [];
   const missingEntities = requiredEntities.filter(
-    (entity: string) => !entityNames.has(entity.toLowerCase())
+    (entity: string) => !entityNames.some((entityName) => looselyMatches(entityName, entity))
   );
   const intentPass = acceptable.size === 0 || acceptable.has(actualIntent);
   const badIntentHit = actualIntent ? bad.has(actualIntent) : false;
   const entityPass = missingEntities.length === 0;
   const reminders = analysis?.suggested_reminders ?? [];
+  const now = new Date();
+  const pastReminders = reminders.filter((reminder) => {
+    const parsed = parseReminderDate(reminder.trigger_value);
+    return parsed ? parsed.getTime() < now.getTime() : false;
+  });
   const missingReminders = (fixture.expected_reminders ?? []).filter((expected) => {
     return !reminders.some((reminder) =>
       includesText(`${reminder.trigger_value ?? ""} ${reminder.rationale ?? ""}`, expected)
     );
   });
   const reminderPass = missingReminders.length === 0;
+  const broadCollectionSuggestions = (analysis?.suggested_collections ?? [])
+    .map((collection) => collection.name ?? "")
+    .filter((name) => broadIntentCollectionNames.has(normalizeText(name)));
   const searchMisses = [];
+  const generatedSearchPhraseHits: string[] = [];
 
   for (const query of fixture.search_queries ?? []) {
+    if ((analysis?.search_phrases ?? []).some((phrase) => looselyMatches(phrase, query))) {
+      generatedSearchPhraseHits.push(query);
+    }
     const results = await searchCapturesForUser(input.supabase, {
       userId: input.userId,
       query,
@@ -74,7 +127,14 @@ async function scoreFixture(input: {
   const searchPass = searchMisses.length === 0;
 
   return {
-    passed: intentPass && entityPass && reminderPass && searchPass && !badIntentHit,
+    passed:
+      intentPass &&
+      entityPass &&
+      reminderPass &&
+      searchPass &&
+      !badIntentHit &&
+      pastReminders.length === 0 &&
+      broadCollectionSuggestions.length === 0,
     score: {
       actual_intent: actualIntent,
       intent_pass: intentPass,
@@ -82,9 +142,12 @@ async function scoreFixture(input: {
       missing_entities: missingEntities,
       entity_pass: entityPass,
       missing_reminders: missingReminders,
+      past_reminders: pastReminders.map((reminder) => reminder.trigger_value),
       reminder_pass: reminderPass,
       search_misses: searchMisses,
-      search_pass: searchPass
+      generated_search_phrase_hits: generatedSearchPhraseHits,
+      search_pass: searchPass,
+      broad_collection_suggestions: broadCollectionSuggestions
     }
   };
 }

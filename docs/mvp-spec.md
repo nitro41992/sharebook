@@ -207,12 +207,15 @@ Stages:
 - Fast enrichment: extract URL metadata, source, title, thumbnail, MIME type, shared text, and initial Platform Evidence.
 - Vision and content extraction: use Visual Understanding, readable content extraction, transcript or caption extraction when available.
 - Entity extraction: identify Captured Entities such as people, places, products, events, media, concepts, dates, prices, and actions.
-- Intent inference: assign Default Intent from entities, Platform Evidence, Capture Context, source app, timestamp, and later user history.
+- Analyzer Context selection: provide a bounded, relevant set of prior Captures, Reminders, Collections, and preference signals when those signals can improve interpretation.
+- Intent inference: assign Default Intent from entities, Platform Evidence, Capture Context, source app, timestamp, and Analyzer Context.
 - Reminder suggestion: propose Reminders when confidence is sufficient.
 - Indexing: store searchable text, embeddings, entities, intent, and evidence.
 - Finalize state: mark the Capture ready, partial, failed, or needs review.
 
 Every stage should be independently retryable and allowed to produce partial results.
+
+Analyzer Context should never be an unbounded dump of user history. Early prototypes may use small recent slices, but the durable design should use strict budgets, relevance-ranked retrieval, corrected intents, accepted or rejected Reminders, existing Collections, and compact preference summaries. Analyzer Context is weak evidence, not permission for the model to invent facts about the user.
 
 Capture Analysis should produce structured output with confidence scores for Captured Entities, Save Intent, Reminder suggestions, and Suggested Actions. Structured confidence is required so Sharebook can debug bad guesses, decide when to show One-Tap Correction, and avoid false precision.
 
@@ -493,6 +496,15 @@ Capture Context:
 - local client hints
 - optional location or calendar context when permissioned
 - one-tap correction history
+
+Analyzer Context:
+
+- current date/time and timezone
+- relevant prior capture summaries
+- corrected Save Intents
+- accepted and rejected Reminder signals
+- existing Collections and likely Collection matches
+- compact preference summaries when repeated behavior supports them
 
 Platform Evidence:
 

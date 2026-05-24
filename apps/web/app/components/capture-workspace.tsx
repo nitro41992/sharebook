@@ -112,9 +112,12 @@ type EvalRun = {
     missing_entities?: string[];
     entity_pass?: boolean;
     missing_reminders?: string[];
+    past_reminders?: string[];
     reminder_pass?: boolean;
     search_misses?: string[];
+    generated_search_phrase_hits?: string[];
     search_pass?: boolean;
+    broad_collection_suggestions?: string[];
   };
   created_at: string;
 };
@@ -161,6 +164,12 @@ type QualityReport = {
   reminder_issue_examples: string[];
   search_issue_examples: string[];
   comments: Array<{ label: string; comment: string }>;
+  product_signal_themes: Array<{
+    theme: string;
+    count: number;
+    recommendation: string;
+    examples: Array<{ label: string; comment: string }>;
+  }>;
   prompt_suggestions: Array<{
     pattern: string;
     proposed_prompt_wording: string;
@@ -791,6 +800,19 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
             <div className="quality-report">
               <span className="chip ready">{qualityReport.total_feedback} feedback items</span>
               <JsonBlock value={qualityReport.issue_counts} />
+              {qualityReport.product_signal_themes?.map((theme) => (
+                <div className="eval-run" key={theme.theme}>
+                  <strong>
+                    {theme.theme} ({theme.count})
+                  </strong>
+                  <p className="muted small">{theme.recommendation}</p>
+                  {theme.examples.slice(0, 2).map((example) => (
+                    <p className="muted small" key={`${theme.theme}-${example.label}`}>
+                      {example.label}: {example.comment}
+                    </p>
+                  ))}
+                </div>
+              ))}
               {qualityReport.prompt_suggestions.map((suggestion) => (
                 <div className="eval-run" key={suggestion.pattern}>
                   <strong>{suggestion.pattern}</strong>
@@ -1296,9 +1318,20 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                                         Missing reminders: {run.score.missing_reminders.join(", ")}
                                       </p>
                                     ) : null}
+                                    {run.score.past_reminders?.length ? (
+                                      <p className="muted small">
+                                        Past reminders: {run.score.past_reminders.join(", ")}
+                                      </p>
+                                    ) : null}
                                     {run.score.search_misses?.length ? (
                                       <p className="muted small">
                                         Search misses: {run.score.search_misses.join(", ")}
+                                      </p>
+                                    ) : null}
+                                    {run.score.broad_collection_suggestions?.length ? (
+                                      <p className="muted small">
+                                        Broad collections:{" "}
+                                        {run.score.broad_collection_suggestions.join(", ")}
                                       </p>
                                     ) : null}
                                   </div>

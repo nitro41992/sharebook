@@ -60,6 +60,10 @@ _Avoid_: Bookmark list, folder
 The surrounding signals available when a Capture is created, such as source app, share text, screenshot content, timestamp, collection name, sender, calendar context, travel context, location, or a one-tap correction.
 _Avoid_: Metadata, note
 
+**Analyzer Context**:
+A bounded set of relevant prior Captures, Reminders, Collections, and preference signals made available to Capture Analysis so Sharebook can interpret the current Capture without reading the user's full history.
+_Avoid_: Raw history, memory dump, prompt history
+
 **One-Tap Correction**:
 An optional lightweight user action that confirms or changes the inferred Save Intent without requiring typing.
 _Avoid_: Required tagging, manual categorization
@@ -141,6 +145,10 @@ Domain Expert: "Keep Intent Categories small and action-oriented: watch later, r
 Product: "Should the user have to explain the reason while saving?"
 
 Domain Expert: "No. Sharebook should infer Save Intent from Capture Context first, then allow One-Tap Correction or an optional Context Note when the guess is wrong or incomplete."
+
+Product: "Can Capture Analysis look at everything the user has saved before?"
+
+Domain Expert: "No. Use Analyzer Context: a bounded, relevant set of prior signals. The point is to improve interpretation, not to paste the user's whole history into every analysis."
 
 Product: "Are the save-intent chips the same as action chips?"
 

@@ -4,6 +4,7 @@ import { openai } from "@ai-sdk/openai";
 import {
   ANALYSIS_PROMPT_VERSION,
   ANALYSIS_SCHEMA_VERSION,
+  AnalyzerUserContext,
   buildCaptureAnalysisPrompt,
   CaptureAnalysis,
   CaptureAnalysisSchema,
@@ -21,6 +22,7 @@ export type AnalyzeCaptureInput = {
   mimeType?: string | null;
   route?: string | null;
   urlMetadata?: UrlMetadata | null;
+  userContext?: AnalyzerUserContext | null;
 };
 
 export type AnalyzeCaptureResult = {
@@ -136,13 +138,24 @@ export async function analyzeCapture(input: AnalyzeCaptureInput): Promise<Analyz
     text_preview: input.text ? input.text.slice(0, 1200) : null,
     has_asset: Boolean(input.assetUrl),
     mime_type: input.mimeType ?? null,
-    url_metadata: input.urlMetadata ?? null
+    url_metadata: input.urlMetadata ?? null,
+    user_context: input.userContext
+      ? {
+          current_date_time: input.userContext.currentDateTime,
+          timezone: input.userContext.timezone,
+          recent_captures: input.userContext.recentCaptures.length,
+          prior_reminders: input.userContext.priorReminders.length,
+          existing_collections: input.userContext.existingCollections.length,
+          recent_collection_suggestions: input.userContext.recentCollectionSuggestions.length
+        }
+      : null
   };
   const prompt = buildCaptureAnalysisPrompt({
     sourceApp: input.sourceApp,
     url: input.url,
     text: input.text,
-    urlMetadata: input.urlMetadata
+    urlMetadata: input.urlMetadata,
+    userContext: input.userContext
   });
 
   const content: Array<{ type: "text"; text: string } | { type: "image"; image: URL }> = [

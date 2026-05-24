@@ -17,6 +17,13 @@ type FixtureForReport = {
   notes: string | null;
 };
 
+type ProductSignalTheme = {
+  theme: string;
+  count: number;
+  recommendation: string;
+  examples: Array<{ label: string; comment: string }>;
+};
+
 function parseNotes(notes: string | null): FeedbackNotes | null {
   if (!notes) return null;
   try {
@@ -29,6 +36,116 @@ function parseNotes(notes: string | null): FeedbackNotes | null {
 
 function increment(map: Record<string, number>, key: string) {
   map[key] = (map[key] ?? 0) + 1;
+}
+
+function addTheme(
+  themes: Record<string, ProductSignalTheme>,
+  input: {
+    key: string;
+    theme: string;
+    label: string;
+    comment: string;
+    recommendation: string;
+  }
+) {
+  themes[input.key] ??= {
+    theme: input.theme,
+    count: 0,
+    recommendation: input.recommendation,
+    examples: []
+  };
+  themes[input.key].count += 1;
+  if (input.comment && themes[input.key].examples.length < 5) {
+    themes[input.key].examples.push({
+      label: input.label,
+      comment: input.comment
+    });
+  }
+}
+
+function recordProductSignalThemes(
+  themes: Record<string, ProductSignalTheme>,
+  input: { label: string; notes: FeedbackNotes }
+) {
+  const comment = input.notes.comment?.trim() ?? "";
+  const lower = comment.toLowerCase();
+  const issues = new Set(input.notes.issues ?? []);
+
+  if (
+    lower.includes("previous") ||
+    lower.includes("past save") ||
+    lower.includes("past saves") ||
+    lower.includes("recurring") ||
+    lower.includes("context") ||
+    lower.includes("works out") ||
+    lower.includes("trip")
+  ) {
+    addTheme(themes, {
+      key: "missing_user_history_context",
+      theme: "Missing user-history context",
+      label: input.label,
+      comment,
+      recommendation:
+        "Pass recent intents, accepted reminders, and relevant prior captures into analysis as weak preference signals."
+    });
+  }
+
+  if (
+    lower.includes("collection") ||
+    lower.includes("collections") ||
+    lower.includes("bespoke") ||
+    lower.includes("same as the intent") ||
+    lower.includes("duplicate")
+  ) {
+    addTheme(themes, {
+      key: "collection_dedupe",
+      theme: "Duplicate or too-broad collections",
+      label: input.label,
+      comment,
+      recommendation:
+        "Prefer existing collections, avoid intent-label collection names, and normalize suggestions before storing them."
+    });
+  }
+
+  if (
+    issues.has("bad_reminder") ||
+    issues.has("missing_reminder") ||
+    lower.includes("current day") ||
+    lower.includes("past") ||
+    lower.includes("right date") ||
+    lower.includes("time") ||
+    lower.includes("thursday") ||
+    lower.includes("upcoming") ||
+    lower.includes("during the event") ||
+    lower.includes("before") ||
+    lower.includes("after")
+  ) {
+    addTheme(themes, {
+      key: "reminder_timing",
+      theme: "Reminder timing needs current-date awareness",
+      label: input.label,
+      comment,
+      recommendation:
+        "Include current date/time and timezone; suppress past reminders and prefer the useful before/during window for future events or deals."
+    });
+  }
+
+  if (
+    lower.includes("not sure where") ||
+    lower.includes("no context") ||
+    lower.includes("doesnt have any context") ||
+    lower.includes("doesn't have any context") ||
+    lower.includes("why not")
+  ) {
+    addTheme(themes, {
+      key: "unsupported_speculation",
+      theme: "Speculative suggestions unsupported by evidence",
+      label: input.label,
+      comment,
+      recommendation:
+        "Require evidence before suggesting DIY, follow-up, or reminder actions, and use user history only as weak supporting context."
+    });
+  }
 }
 
 function suggestionForIssue(issue: string) {
@@ -109,11 +226,13 @@ export async function GET() {
   const searchIssueExamples: string[] = [];
   const comments: Array<{ label: string; comment: string }> = [];
   const suggestionKeys = new Set<string>();
+  const productSignalThemes: Record<string, ProductSignalTheme> = {};
 
   for (const fixture of (data ?? []) as FixtureForReport[]) {
     const notes = parseNotes(fixture.notes);
     if (!notes) continue;
     const label = fixture.label ?? "Untitled feedback";
+    recordProductSignalThemes(productSignalThemes, { label, notes });
 
     if (notes.comment?.trim()) {
       comments.push({ label, comment: notes.comment.trim() });
@@ -156,6 +275,9 @@ export async function GET() {
       reminder_issue_examples: reminderIssueExamples.slice(0, 12),
       search_issue_examples: searchIssueExamples.slice(0, 12),
       comments: comments.slice(0, 20),
+      product_signal_themes: Object.values(productSignalThemes).sort(
+        (a, b) => b.count - a.count
+      ),
       prompt_suggestions: promptSuggestions
     }
   });

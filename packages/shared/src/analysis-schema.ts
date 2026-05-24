@@ -13,10 +13,10 @@ export const ConfidenceSchema = z.number().min(0).max(1);
 export const AnalysisEntitySchema = z.object({
   type: EntityTypeSchema,
   name: z.string().min(1),
-  normalized_name: z.string().optional(),
+  normalized_name: z.string().nullable(),
   confidence: ConfidenceSchema,
   evidence: z.string().min(1),
-  source: EvidenceSourceSchema.default("model_inference")
+  source: EvidenceSourceSchema
 });
 
 export const PlatformEvidenceSchema = z.object({
@@ -55,12 +55,12 @@ export const CaptureAnalysisSchema = z.object({
     confidence: ConfidenceSchema,
     rationale: z.string().min(1)
   }),
-  entities: z.array(AnalysisEntitySchema).default([]),
-  platform_evidence: z.array(PlatformEvidenceSchema).default([]),
-  suggested_reminders: z.array(SuggestedReminderSchema).default([]),
-  suggested_actions: z.array(SuggestedActionSchema).default([]),
-  suggested_collections: z.array(SuggestedCollectionSchema).default([]),
-  search_phrases: z.array(z.string().min(1)).default([]),
+  entities: z.array(AnalysisEntitySchema),
+  platform_evidence: z.array(PlatformEvidenceSchema),
+  suggested_reminders: z.array(SuggestedReminderSchema),
+  suggested_actions: z.array(SuggestedActionSchema),
+  suggested_collections: z.array(SuggestedCollectionSchema),
+  search_phrases: z.array(z.string().min(1)),
   needs_review: z.boolean()
 });
 

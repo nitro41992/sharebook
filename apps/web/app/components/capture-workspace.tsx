@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Archive,
   Brain,
   CheckCircle2,
   Download,
@@ -131,6 +130,12 @@ type EvalFixture = {
 
 type InspectorTab = "review" | "source" | "debug" | "evals";
 
+type IntentUndo = {
+  captureId: string;
+  from: IntentCategory;
+  to: IntentCategory;
+};
+
 function stateClass(state: string) {
   if (state === "ready") return "ready";
   if (state === "failed") return "bad";
@@ -214,10 +219,13 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [tab, setTab] = useState<InspectorTab>("review");
+  const [selectedRunId, setSelectedRunId] = useState("");
   const [fixtureStatus, setFixtureStatus] = useState("");
   const [compareStatus, setCompareStatus] = useState("");
   const [fixtures, setFixtures] = useState<EvalFixture[]>([]);
   const [evalStatus, setEvalStatus] = useState("");
+  const [intentUpdatingId, setIntentUpdatingId] = useState<string | null>(null);
+  const [intentUndo, setIntentUndo] = useState<IntentUndo | null>(null);
   const [fixtureDraft, setFixtureDraft] = useState({
     expectedIntent: "",
     acceptableIntents: "",
@@ -231,7 +239,9 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
     () => captures.find((capture) => capture.id === selectedId) ?? captures[0],
     [captures, selectedId]
   );
-  const selectedRun = selected?.analysis_runs?.[0];
+  const selectedRuns = selected?.analysis_runs ?? [];
+  const selectedRun =
+    selectedRuns.find((run) => run.id === selectedRunId) ?? selectedRuns[0];
   const selectedPreview = selected?.capture_assets?.find((asset) =>
     asset.mime_type?.startsWith("image/")
   );
@@ -275,6 +285,7 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   }
 
   async function analyzeCapture(captureId: string, route = "high_precision_openai") {
+    if (intentUndo?.captureId === captureId) setIntentUndo(null);
     setAnalyzingIds((current) => new Set(current).add(captureId));
     setCaptures((current) =>
       current.map((capture) =>
@@ -326,21 +337,62 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
 
   async function updateIntent(intent: IntentCategory) {
     if (!selected) return;
-    const response = await fetch("/api/captures", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ captureId: selected.id, currentSaveIntent: intent })
-    });
-    const json = await readJsonResponse(response);
-    if (!response.ok) {
-      alert(json.error ?? "Could not update intent");
-      return;
+    const captureId = selected.id;
+    const previousIntent = selected.current_save_intent ?? selected.default_intent;
+    setIntentUpdatingId(captureId);
+    setIntentUndo(null);
+    try {
+      const response = await fetch("/api/captures", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ captureId, currentSaveIntent: intent })
+      });
+      const json = await readJsonResponse(response);
+      if (!response.ok) {
+        alert(json.error ?? "Could not update intent");
+        return;
+      }
+      setCaptures((current) =>
+        current.map((capture) =>
+          capture.id === captureId ? { ...capture, current_save_intent: intent } : capture
+        )
+      );
+      if (previousIntent && previousIntent !== intent) {
+        setIntentUndo({ captureId, from: previousIntent, to: intent });
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not update intent");
+    } finally {
+      setIntentUpdatingId(null);
     }
-    setCaptures((current) =>
-      current.map((capture) =>
-        capture.id === selected.id ? { ...capture, current_save_intent: intent } : capture
-      )
-    );
+  }
+
+  async function undoIntent() {
+    if (!intentUndo) return;
+    const undo = intentUndo;
+    setIntentUpdatingId(undo.captureId);
+    try {
+      const response = await fetch("/api/captures", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ captureId: undo.captureId, currentSaveIntent: undo.from })
+      });
+      const json = await readJsonResponse(response);
+      if (!response.ok) {
+        alert(json.error ?? "Could not undo intent change");
+        return;
+      }
+      setCaptures((current) =>
+        current.map((capture) =>
+          capture.id === undo.captureId ? { ...capture, current_save_intent: undo.from } : capture
+        )
+      );
+      setIntentUndo(null);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not undo intent change");
+    } finally {
+      setIntentUpdatingId(null);
+    }
   }
 
   async function search() {
@@ -388,7 +440,10 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
     });
     const json = await readJsonResponse(response);
     setFixtureStatus(response.ok ? `Saved fixture ${json.fixture?.id?.slice(0, 8)}` : json.error);
-    if (response.ok) await loadFixtures(selected.id);
+    if (response.ok) {
+      setIntentUndo(null);
+      await loadFixtures(selected.id);
+    }
   }
 
   async function runEval(fixtureId: string, modelRoute = "high_precision_openai") {
@@ -446,6 +501,8 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
 
   useEffect(() => {
     if (!selected) return;
+    setSelectedRunId(selected.analysis_runs?.[0]?.id ?? "");
+    setIntentUndo((undo) => (undo?.captureId === selected.id ? undo : null));
     setFixtureDraft({
       expectedIntent: selected.current_save_intent ?? selected.default_intent ?? "",
       acceptableIntents: "",
@@ -698,11 +755,27 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                           intent === selected.current_save_intent ? "intent" : ""
                         }`}
                         onClick={() => updateIntent(intent)}
+                        disabled={intentUpdatingId === selected.id}
                       >
                         {intentLabels[intent]}
                       </button>
                     ))}
                   </div>
+                  {intentUndo?.captureId === selected.id ? (
+                    <div className="undo-banner">
+                      <span>
+                        Intent changed from {intentLabels[intentUndo.from]} to{" "}
+                        {intentLabels[intentUndo.to]}.
+                      </span>
+                      <button
+                        className="button secondary"
+                        onClick={undoIntent}
+                        disabled={intentUpdatingId === selected.id}
+                      >
+                        Undo
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="panel">
                   <div className="label">Entities</div>
@@ -856,8 +929,8 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                       <JsonBlock value={selectedRun.raw_model_output} />
                     </div>
                     <div className="panel">
-                      <div className="label">Repaired JSON</div>
-                      <JsonBlock value={selectedRun.repaired_output} />
+                      <div className="label">Structured output / repaired JSON</div>
+                      <JsonBlock value={selectedRun.extracted_json ?? selectedRun.repaired_output} />
                     </div>
                   </>
                 ) : (
@@ -1050,18 +1123,36 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                 </div>
                 <div className="panel">
                   <div className="label">Recent runs</div>
+                  <p className="muted small">
+                    Review a run to inspect its raw model output, repaired JSON, schema errors, and
+                    input snapshot in the Debug tab.
+                  </p>
                   <div className="suggestion-list" style={{ marginTop: 10 }}>
                     {selected.analysis_runs?.length ? (
                       selected.analysis_runs.map((run) => (
-                        <div className="suggestion-item" key={run.id}>
-                          <strong>{run.model_route ?? run.model}</strong>{" "}
-                          <span className="muted small">
-                            {run.is_canonical ? "canonical" : "comparison"} · {run.status}
-                          </span>
+                        <div
+                          className={`suggestion-item ${run.id === selectedRun?.id ? "selected-run" : ""}`}
+                          key={run.id}
+                        >
+                          <div className="toolbar">
+                            <strong>{run.model_route ?? run.model}</strong>{" "}
+                            <span className="muted small">
+                              {run.is_canonical ? "canonical" : "comparison"} · {run.status}
+                            </span>
+                          </div>
                           <p className="muted small">
                             {run.latency_ms ? `${run.latency_ms} ms` : "No latency"} ·{" "}
                             {new Date(run.created_at).toLocaleString()}
                           </p>
+                          <button
+                            className="button secondary"
+                            onClick={() => {
+                              setSelectedRunId(run.id);
+                              setTab("debug");
+                            }}
+                          >
+                            Review output
+                          </button>
                         </div>
                       ))
                     ) : (
@@ -1072,16 +1163,6 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
               </>
             ) : null}
 
-            <div className="panel">
-              <div className="toolbar">
-                <span className="chip">
-                  <CheckCircle2 size={14} /> Accept output
-                </span>
-                <span className="chip">
-                  <Archive size={14} /> Archive later
-                </span>
-              </div>
-            </div>
           </div>
         ) : (
           <div className="empty">Select a capture to inspect analysis output.</div>

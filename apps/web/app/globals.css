@@ -272,6 +272,11 @@ a {
   cursor: pointer;
 }
 
+.chip-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .chip.intent {
   border-color: rgba(181, 99, 31, 0.3);
   background: rgba(181, 99, 31, 0.11);
@@ -305,6 +310,19 @@ a {
 .panel {
   border-top: 1px solid var(--line);
   padding: 20px 0;
+}
+
+.undo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  border: 1px solid rgba(31, 122, 77, 0.24);
+  background: rgba(31, 122, 77, 0.08);
+  color: var(--ink);
+  padding: 12px;
+  font-size: 13px;
 }
 
 .tabs {
@@ -368,6 +386,10 @@ a {
 .suggestion-item {
   border-left: 2px solid var(--line);
   padding-left: 12px;
+}
+
+.suggestion-item.selected-run {
+  border-left-color: var(--accent);
 }
 
 .small {

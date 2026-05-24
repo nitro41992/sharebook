@@ -188,7 +188,7 @@ const feedbackIssues = [
 ] as const;
 
 type FeedbackIssue = (typeof feedbackIssues)[number]["id"];
-type Screen = "home" | "detail" | "qualityReport";
+type Screen = "home" | "detail" | "evals" | "qualityReport";
 type DetailTab = "review" | "quality" | "source" | "debug";
 
 const pageSize = 25;
@@ -527,6 +527,11 @@ export default function App() {
   const [evalStatus, setEvalStatus] = useState("");
   const [editingFeedbackId, setEditingFeedbackId] = useState("");
   const [intentUpdatingId, setIntentUpdatingId] = useState<string | null>(null);
+  const [intentCorrection, setIntentCorrection] = useState<{
+    captureId: string;
+    previousIntent: IntentCategory | null;
+    nextIntent: IntentCategory;
+  } | null>(null);
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
   const [reportStatus, setReportStatus] = useState("");
   const [feedbackDraft, setFeedbackDraft] = useState({
@@ -629,6 +634,7 @@ export default function App() {
         resetFeedbackDraft(capture);
         setFixtureStatus("");
         setEvalStatus("");
+        setIntentCorrection(null);
         await loadFixtures(captureId);
         return capture;
       } catch (error) {
@@ -709,6 +715,11 @@ export default function App() {
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (!session) return false;
+
+      if (screen === "evals") {
+        setScreen("detail");
+        return true;
+      }
 
       if (screen === "detail") {
         if (detailTab !== "review") {
@@ -916,6 +927,7 @@ export default function App() {
   async function updateIntent(intent: IntentCategory) {
     if (!session || !selected) return;
     const captureId = selected.id;
+    const previousIntent = activeIntent(selected);
     setIntentUpdatingId(captureId);
     try {
       const json = await apiFetch("/api/captures", session, {
@@ -923,24 +935,45 @@ export default function App() {
         body: JSON.stringify({ captureId, currentSaveIntent: intent })
       });
       mergeCapture(json.capture as Capture);
-      setFeedbackDraft((current) => ({
-        ...current,
-        looksRight: false,
-        issues: current.issues.includes("wrong_intent")
-          ? current.issues
-          : [...current.issues, "wrong_intent"],
-        correctedIntent: intent,
-        badIntents:
-          activeIntent(selected) && activeIntent(selected) !== intent
-            ? Array.from(new Set([...current.badIntents, activeIntent(selected)!]))
-            : current.badIntents
-      }));
-      setFixtureStatus("Intent updated. Save feedback to add it to evals.");
+      setIntentCorrection({ captureId, previousIntent, nextIntent: intent });
+      setFixtureStatus(`Intent changed to ${intentLabels[intent]}.`);
     } catch (error) {
       Alert.alert("Could not update intent", error instanceof Error ? error.message : "Unknown error");
     } finally {
       setIntentUpdatingId(null);
     }
+  }
+
+  function openEvalsScreen() {
+    if (!selected) return;
+    setScreen("evals");
+    setEvalStatus("");
+    loadFixtures(selected.id);
+  }
+
+  function addEvalFromIntentChange() {
+    if (!selected || !intentCorrection || intentCorrection.captureId !== selected.id) return;
+    setEditingFeedbackId("");
+    setFeedbackDraft({
+      looksRight: false,
+      issues: ["wrong_intent"],
+      correctedIntent: intentCorrection.nextIntent,
+      acceptableIntents: [],
+      badIntents:
+        intentCorrection.previousIntent && intentCorrection.previousIntent !== intentCorrection.nextIntent
+          ? [intentCorrection.previousIntent]
+          : [],
+      requiredEntities: listToLines(
+        selected.captured_entities?.slice(0, 4).map((entity) => entity.display_name)
+      ),
+      expectedReminders: "",
+      searchQueries: "",
+      comment: ""
+    });
+    setFixtureStatus("Drafted a wrong-intent eval from this correction.");
+    setEvalStatus("");
+    setScreen("evals");
+    loadFixtures(selected.id);
   }
 
   async function saveFeedback() {
@@ -977,7 +1010,8 @@ export default function App() {
       );
       setEditingFeedbackId("");
       await loadFixtures(selected.id);
-      setDetailTab("quality");
+      resetFeedbackDraft(selected);
+      setScreen("evals");
     } catch (error) {
       setFixtureStatus(error instanceof Error ? error.message : "Could not save eval");
     }
@@ -1004,6 +1038,8 @@ export default function App() {
       comment: meta?.comment ?? fixture.notes ?? ""
     });
     setFixtureStatus(`Editing eval ${fixture.id.slice(0, 8)}`);
+    setEvalStatus("");
+    setScreen("evals");
   }
 
   async function deleteFeedback(fixtureId: string) {
@@ -1038,9 +1074,10 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ fixtureId, modelRoute: "openai_mini" })
       });
-      setEvalStatus(json.evalRun?.passed ? "Eval passed" : "Eval needs review");
       await loadFixtures(selected.id);
       await loadCaptureDetail(selected.id);
+      setScreen("evals");
+      setEvalStatus(json.evalRun?.passed ? "Eval passed" : "Eval needs review");
     } catch (error) {
       setEvalStatus(error instanceof Error ? error.message : "Eval failed");
     }
@@ -1068,6 +1105,14 @@ export default function App() {
     });
   }
 
+  function setEvalVerdict(looksRight: boolean) {
+    setFeedbackDraft((current) => ({
+      ...current,
+      looksRight,
+      issues: looksRight ? [] : current.issues
+    }));
+  }
+
   function toggleDraftIntentList(field: "acceptableIntents" | "badIntents", intent: IntentCategory) {
     setFeedbackDraft((current) => {
       const next = current[field].includes(intent)
@@ -1084,6 +1129,7 @@ export default function App() {
     setSelectedId(null);
     setScreen("home");
     setShowAccount(false);
+    setIntentCorrection(null);
   }
 
   async function setAccountPassword() {
@@ -1349,6 +1395,7 @@ export default function App() {
         </View>
         <View style={styles.panel}>
           <Text style={styles.subhead}>Intent correction</Text>
+          <Text style={styles.bodyText}>Change the capture intent here. Add evals separately when you want this correction to teach the prompt.</Text>
           <View style={styles.wrapRow}>
             {intentCategories.map((item) => (
               <PillButton
@@ -1360,14 +1407,25 @@ export default function App() {
               />
             ))}
           </View>
-          {fixtureStatus ? <Text style={styles.meta}>{fixtureStatus}</Text> : null}
-          {feedbackDraft.issues.includes("wrong_intent") ? (
-            <View style={styles.row}>
-              <Pressable onPress={saveFeedback} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>Save intent eval</Text>
+          {intentCorrection?.captureId === capture.id ? (
+            <View style={styles.inlineNotice}>
+              <Text style={styles.intentText}>
+                Intent changed to {intentLabels[intentCorrection.nextIntent]}.
+              </Text>
+              <Text style={styles.meta}>
+                Previous: {intentName(intentCorrection.previousIntent)}
+              </Text>
+            </View>
+          ) : fixtureStatus ? (
+            <Text style={styles.meta}>{fixtureStatus}</Text>
+          ) : null}
+          {intentCorrection?.captureId === capture.id ? (
+            <View style={styles.wrapRow}>
+              <Pressable onPress={addEvalFromIntentChange} style={styles.secondaryButton}>
+                <Text style={styles.secondaryButtonText}>Add eval from this change</Text>
               </Pressable>
-              <Pressable onPress={() => setDetailTab("quality")} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>Edit eval</Text>
+              <Pressable onPress={openEvalsScreen} style={styles.secondaryButton}>
+                <Text style={styles.secondaryButtonText}>View evals</Text>
               </Pressable>
             </View>
           ) : null}
@@ -1432,136 +1490,167 @@ export default function App() {
     );
   }
 
-  function renderQualityTab(capture: Capture) {
+  function renderQualityTab() {
     return (
       <View style={styles.detailStack}>
         <View style={styles.panel}>
           <View style={styles.captureRowTop}>
-            <Text style={styles.subhead}>Eval fixture</Text>
-            {editingFeedbackId ? <Text style={[styles.pill, styles.pillWarn]}>editing</Text> : null}
+            <Text style={styles.subhead}>Capture evals</Text>
+            <Text style={styles.meta}>{fixtures.length} saved</Text>
           </View>
-          <Pressable
-            onPress={() =>
-              setFeedbackDraft((current) => ({
-                ...current,
-                looksRight: !current.looksRight,
-                issues: !current.looksRight ? [] : current.issues
-              }))
-            }
-            style={styles.checkRow}
-          >
-            <View style={[styles.checkbox, feedbackDraft.looksRight && styles.checkboxChecked]} />
-            <Text style={styles.bodyStrong}>Looks right</Text>
-          </Pressable>
+          <Text style={styles.bodyText}>
+            Manage examples for this capture in one place. You can add passing or failing evals, edit saved evals, delete old ones, and run Mini against the current prompt.
+          </Text>
           <View style={styles.wrapRow}>
-            {feedbackIssues.map((issue) => (
-              <PillButton
-                key={issue.id}
-                active={feedbackDraft.issues.includes(issue.id)}
-                label={issue.label}
-                onPress={() => toggleIssue(issue.id)}
-              />
-            ))}
-          </View>
-          <Text style={styles.label}>Expected intent</Text>
-          <View style={styles.wrapRow}>
-            {intentCategories.map((intent) => (
-              <PillButton
-                key={intent}
-                active={feedbackDraft.correctedIntent === intent}
-                label={intentLabels[intent]}
-                onPress={() =>
-                  setFeedbackDraft((current) => ({ ...current, correctedIntent: intent }))
-                }
-              />
-            ))}
-          </View>
-          <Text style={styles.label}>Acceptable alternate intents</Text>
-          <View style={styles.wrapRow}>
-            {intentCategories.map((intent) => (
-              <PillButton
-                key={intent}
-                active={feedbackDraft.acceptableIntents.includes(intent)}
-                label={intentLabels[intent]}
-                onPress={() => toggleDraftIntentList("acceptableIntents", intent)}
-              />
-            ))}
-          </View>
-          <Text style={styles.label}>Bad intents</Text>
-          <View style={styles.wrapRow}>
-            {intentCategories.map((intent) => (
-              <PillButton
-                key={intent}
-                active={feedbackDraft.badIntents.includes(intent)}
-                label={intentLabels[intent]}
-                onPress={() => toggleDraftIntentList("badIntents", intent)}
-              />
-            ))}
-          </View>
-          <TextInput
-            multiline
-            onChangeText={(requiredEntities) =>
-              setFeedbackDraft((current) => ({ ...current, requiredEntities }))
-            }
-            placeholder={
-              hasEntityIssue
-                ? "Expected entities, one per line"
-                : "Expected entities, one per line (optional)"
-            }
-            placeholderTextColor={colors.muted}
-            style={[styles.input, styles.compactArea]}
-            value={feedbackDraft.requiredEntities}
-          />
-          <TextInput
-            multiline
-            onChangeText={(expectedReminders) =>
-              setFeedbackDraft((current) => ({ ...current, expectedReminders }))
-            }
-            placeholder={
-              hasReminderIssue ? "Expected reminders" : "Expected reminders (optional)"
-            }
-            placeholderTextColor={colors.muted}
-            style={[styles.input, styles.compactArea]}
-            value={feedbackDraft.expectedReminders}
-          />
-          <TextInput
-            multiline
-            onChangeText={(searchQueries) =>
-              setFeedbackDraft((current) => ({ ...current, searchQueries }))
-            }
-            placeholder={
-              hasSearchIssue
-                ? "Search queries that should find this"
-                : "Search queries that should find this (optional)"
-            }
-            placeholderTextColor={colors.muted}
-            style={[styles.input, styles.compactArea]}
-            value={feedbackDraft.searchQueries}
-          />
-          <TextInput
-            multiline
-            onChangeText={(comment) => setFeedbackDraft((current) => ({ ...current, comment }))}
-            placeholder="Optional comment"
-            placeholderTextColor={colors.muted}
-            style={[styles.input, styles.compactArea]}
-            value={feedbackDraft.comment}
-          />
-          <View style={styles.row}>
-            <Pressable onPress={saveFeedback} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>
-                {editingFeedbackId ? "Update eval" : "Save eval"}
-              </Text>
+            <Pressable onPress={openEvalsScreen} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>Open evals</Text>
             </Pressable>
-            {editingFeedbackId ? (
-              <Pressable onPress={() => resetFeedbackDraft(capture)} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </Pressable>
-            ) : null}
+            <Pressable onPress={loadQualityReport} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>Quality report</Text>
+            </Pressable>
           </View>
-          {fixtureStatus ? <Text style={styles.meta}>{fixtureStatus}</Text> : null}
-          {evalStatus ? <Text style={styles.meta}>{evalStatus}</Text> : null}
         </View>
+      </View>
+    );
+  }
 
+  function renderEvalForm(capture: Capture) {
+    const hasIssues = !feedbackDraft.looksRight;
+    return (
+      <View style={styles.panel}>
+        <View style={styles.captureRowTop}>
+          <Text style={styles.subhead}>{editingFeedbackId ? "Edit eval" : "New eval"}</Text>
+          {editingFeedbackId ? <Text style={[styles.pill, styles.pillWarn]}>editing</Text> : null}
+        </View>
+        <Text style={styles.bodyText}>
+          Save an eval to teach the prompt what should pass or fail for this capture.
+        </Text>
+        <View style={styles.wrapRow}>
+          <PillButton
+            active={feedbackDraft.looksRight}
+            label="Mini output is correct"
+            onPress={() => setEvalVerdict(true)}
+          />
+          <PillButton
+            active={!feedbackDraft.looksRight}
+            label="Mini output has issues"
+            onPress={() => setEvalVerdict(false)}
+          />
+        </View>
+        {hasIssues ? (
+          <>
+            <Text style={styles.label}>Issues</Text>
+            <View style={styles.wrapRow}>
+              {feedbackIssues.map((issue) => (
+                <PillButton
+                  key={issue.id}
+                  active={feedbackDraft.issues.includes(issue.id)}
+                  label={issue.label}
+                  onPress={() => toggleIssue(issue.id)}
+                />
+              ))}
+            </View>
+            <Text style={styles.label}>Expected intent</Text>
+            <View style={styles.wrapRow}>
+              {intentCategories.map((intent) => (
+                <PillButton
+                  key={intent}
+                  active={feedbackDraft.correctedIntent === intent}
+                  label={intentLabels[intent]}
+                  onPress={() =>
+                    setFeedbackDraft((current) => ({ ...current, correctedIntent: intent }))
+                  }
+                />
+              ))}
+            </View>
+            <Text style={styles.label}>Acceptable alternate intents</Text>
+            <View style={styles.wrapRow}>
+              {intentCategories.map((intent) => (
+                <PillButton
+                  key={intent}
+                  active={feedbackDraft.acceptableIntents.includes(intent)}
+                  label={intentLabels[intent]}
+                  onPress={() => toggleDraftIntentList("acceptableIntents", intent)}
+                />
+              ))}
+            </View>
+            <Text style={styles.label}>Bad intents</Text>
+            <View style={styles.wrapRow}>
+              {intentCategories.map((intent) => (
+                <PillButton
+                  key={intent}
+                  active={feedbackDraft.badIntents.includes(intent)}
+                  label={intentLabels[intent]}
+                  onPress={() => toggleDraftIntentList("badIntents", intent)}
+                />
+              ))}
+            </View>
+            {hasEntityIssue ? (
+              <TextInput
+                multiline
+                onChangeText={(requiredEntities) =>
+                  setFeedbackDraft((current) => ({ ...current, requiredEntities }))
+                }
+                placeholder="Expected entities, one per line"
+                placeholderTextColor={colors.muted}
+                style={[styles.input, styles.compactArea]}
+                value={feedbackDraft.requiredEntities}
+              />
+            ) : null}
+            {hasReminderIssue ? (
+              <TextInput
+                multiline
+                onChangeText={(expectedReminders) =>
+                  setFeedbackDraft((current) => ({ ...current, expectedReminders }))
+                }
+                placeholder="Expected reminders"
+                placeholderTextColor={colors.muted}
+                style={[styles.input, styles.compactArea]}
+                value={feedbackDraft.expectedReminders}
+              />
+            ) : null}
+            {hasSearchIssue ? (
+              <TextInput
+                multiline
+                onChangeText={(searchQueries) =>
+                  setFeedbackDraft((current) => ({ ...current, searchQueries }))
+                }
+                placeholder="Search queries that should find this"
+                placeholderTextColor={colors.muted}
+                style={[styles.input, styles.compactArea]}
+                value={feedbackDraft.searchQueries}
+              />
+            ) : null}
+          </>
+        ) : null}
+        <TextInput
+          multiline
+          onChangeText={(comment) => setFeedbackDraft((current) => ({ ...current, comment }))}
+          placeholder={hasIssues ? "Optional comment" : "Optional note about why this passed"}
+          placeholderTextColor={colors.muted}
+          style={[styles.input, styles.compactArea]}
+          value={feedbackDraft.comment}
+        />
+        <View style={styles.wrapRow}>
+          <Pressable onPress={saveFeedback} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>
+              {editingFeedbackId ? "Update eval" : "Save eval"}
+            </Text>
+          </Pressable>
+          {editingFeedbackId ? (
+            <Pressable onPress={() => resetFeedbackDraft(capture)} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>Cancel edit</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {fixtureStatus ? <Text style={styles.meta}>{fixtureStatus}</Text> : null}
+        {evalStatus ? <Text style={styles.meta}>{evalStatus}</Text> : null}
+      </View>
+    );
+  }
+
+  function renderSavedEvals() {
+    return (
         <View style={styles.panel}>
           <View style={styles.captureRowTop}>
             <Text style={styles.subhead}>Saved evals</Text>
@@ -1638,7 +1727,39 @@ export default function App() {
             <Text style={styles.empty}>No evals saved for this capture yet.</Text>
           )}
         </View>
-      </View>
+    );
+  }
+
+  function renderEvalsScreen() {
+    if (!selected) {
+      return (
+        <View style={styles.content}>
+          <Text style={styles.empty}>Select a capture to manage evals.</Text>
+        </View>
+      );
+    }
+    return (
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={loadingDetailId === selected.id} onRefresh={() => loadCaptureDetail(selected.id)} />
+        }
+      >
+        <View style={styles.detailHero}>
+          <View style={styles.captureRowTop}>
+            <Pressable onPress={() => setScreen("detail")} style={styles.textButton}>
+              <Text style={styles.textButtonLabel}>Back</Text>
+            </Pressable>
+            <Text style={styles.meta}>{fixtures.length} saved</Text>
+          </View>
+          <Text style={styles.detailTitle}>Evals</Text>
+          <Text style={styles.bodyText}>{captureTitle(selected)}</Text>
+        </View>
+        <View style={styles.detailStack}>
+          {renderEvalForm(selected)}
+          {renderSavedEvals()}
+        </View>
+      </ScrollView>
     );
   }
 
@@ -1727,7 +1848,12 @@ export default function App() {
             <Pressable onPress={() => setScreen("home")} style={styles.textButton}>
               <Text style={styles.textButtonLabel}>Back</Text>
             </Pressable>
-            <StatusPill state={selected.analysis_state} />
+            <View style={styles.headerActions}>
+              <Pressable onPress={openEvalsScreen} style={styles.textButton}>
+                <Text style={styles.textButtonLabel}>Evals</Text>
+              </Pressable>
+              <StatusPill state={selected.analysis_state} />
+            </View>
           </View>
           <Text style={styles.detailTitle}>{captureTitle(selected)}</Text>
           <View style={styles.inlineMeta}>
@@ -1762,7 +1888,7 @@ export default function App() {
           ))}
         </View>
         {detailTab === "review" ? renderReviewTab(selected) : null}
-        {detailTab === "quality" ? renderQualityTab(selected) : null}
+        {detailTab === "quality" ? renderQualityTab() : null}
         {detailTab === "source" ? renderSourceTab(selected) : null}
         {detailTab === "debug" ? renderDebugTab(selected) : null}
       </ScrollView>
@@ -1842,7 +1968,13 @@ export default function App() {
           <View>
             <Text style={styles.kicker}>Sharebook 0A</Text>
             <Text style={styles.screenTitle}>
-              {screen === "detail" ? "Capture review" : screen === "qualityReport" ? "Quality" : "Phone capture"}
+              {screen === "detail"
+                ? "Capture review"
+                : screen === "evals"
+                  ? "Capture evals"
+                  : screen === "qualityReport"
+                    ? "Quality"
+                    : "Phone capture"}
             </Text>
           </View>
           <View style={styles.headerActions}>
@@ -1856,6 +1988,7 @@ export default function App() {
         </View>
         {screen === "home" ? renderHome() : null}
         {screen === "detail" ? renderDetail() : null}
+        {screen === "evals" ? renderEvalsScreen() : null}
         {screen === "qualityReport" ? renderQualityReport() : null}
       </View>
     </View>
@@ -2223,6 +2356,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     marginBottom: 8
+  },
+  inlineNotice: {
+    backgroundColor: colors.readyBg,
+    borderRadius: 10,
+    gap: 2,
+    marginTop: 10,
+    padding: 10
   },
   intentLabel: {
     color: colors.ink,

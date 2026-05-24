@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  BackHandler,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -138,6 +139,8 @@ type EvalFixture = {
   id: string;
   label: string | null;
   expected_intent: IntentCategory | null;
+  acceptable_intents: string[];
+  bad_intents: string[];
   required_entities: string[];
   expected_reminders: string[];
   search_queries: string[];
@@ -503,6 +506,8 @@ export default function App() {
     looksRight: true,
     issues: [] as FeedbackIssue[],
     correctedIntent: "",
+    acceptableIntents: [] as IntentCategory[],
+    badIntents: [] as IntentCategory[],
     requiredEntities: "",
     expectedReminders: "",
     searchQueries: "",
@@ -556,6 +561,8 @@ export default function App() {
       looksRight: true,
       issues: [],
       correctedIntent: activeIntent(capture) ?? "",
+      acceptableIntents: [],
+      badIntents: [],
       requiredEntities: listToLines(
         capture?.captured_entities?.slice(0, 4).map((entity) => entity.display_name)
       ),
@@ -671,6 +678,41 @@ export default function App() {
   useEffect(() => {
     if (session) refreshCaptures(session);
   }, [refreshCaptures, session]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!session) return false;
+
+      if (screen === "detail") {
+        if (detailTab !== "review") {
+          setDetailTab("review");
+          return true;
+        }
+        setScreen("home");
+        return true;
+      }
+
+      if (screen === "qualityReport") {
+        setScreen("home");
+        return true;
+      }
+
+      if (showAccount) {
+        setShowAccount(false);
+        return true;
+      }
+
+      if (query || searchResults.length) {
+        setQuery("");
+        setSearchResults([]);
+        return true;
+      }
+
+      return false;
+    });
+
+    return () => subscription.remove();
+  }, [detailTab, query, screen, searchResults.length, session, showAccount]);
 
   useEffect(() => {
     const shared = incomingShare.resolvedSharedPayloads?.[0] as
@@ -854,7 +896,19 @@ export default function App() {
         body: JSON.stringify({ captureId, currentSaveIntent: intent })
       });
       mergeCapture(json.capture as Capture);
-      setFeedbackDraft((current) => ({ ...current, correctedIntent: intent }));
+      setFeedbackDraft((current) => ({
+        ...current,
+        looksRight: false,
+        issues: current.issues.includes("wrong_intent")
+          ? current.issues
+          : [...current.issues, "wrong_intent"],
+        correctedIntent: intent,
+        badIntents:
+          activeIntent(selected) && activeIntent(selected) !== intent
+            ? Array.from(new Set([...current.badIntents, activeIntent(selected)!]))
+            : current.badIntents
+      }));
+      setFixtureStatus("Intent updated. Save feedback to add it to evals.");
     } catch (error) {
       Alert.alert("Could not update intent", error instanceof Error ? error.message : "Unknown error");
     } finally {
@@ -879,8 +933,8 @@ export default function App() {
       ...(editingFeedbackId ? { fixtureId: editingFeedbackId } : { captureId: selected.id }),
       label: captureTitle(selected),
       expectedIntent: feedbackDraft.correctedIntent || activeIntent(selected),
-      acceptableIntents: [],
-      badIntents: [],
+      acceptableIntents: feedbackDraft.acceptableIntents,
+      badIntents: feedbackDraft.badIntents,
       requiredEntities: linesToList(feedbackDraft.requiredEntities),
       expectedReminders: linesToList(feedbackDraft.expectedReminders),
       searchQueries: linesToList(feedbackDraft.searchQueries),
@@ -910,6 +964,12 @@ export default function App() {
         feedbackIssues.some((item) => item.id === issue)
       ),
       correctedIntent: fixture.expected_intent ?? activeIntent(selected) ?? "",
+      acceptableIntents: fixture.acceptable_intents.filter((intent): intent is IntentCategory =>
+        intentCategories.includes(intent as IntentCategory)
+      ),
+      badIntents: fixture.bad_intents.filter((intent): intent is IntentCategory =>
+        intentCategories.includes(intent as IntentCategory)
+      ),
       requiredEntities: listToLines(fixture.required_entities),
       expectedReminders: listToLines(fixture.expected_reminders),
       searchQueries: listToLines(fixture.search_queries),
@@ -977,6 +1037,15 @@ export default function App() {
         ? current.issues.filter((item) => item !== issue)
         : [...current.issues, issue];
       return { ...current, issues, looksRight: issues.length === 0 };
+    });
+  }
+
+  function toggleDraftIntentList(field: "acceptableIntents" | "badIntents", intent: IntentCategory) {
+    setFeedbackDraft((current) => {
+      const next = current[field].includes(intent)
+        ? current[field].filter((item) => item !== intent)
+        : [...current[field], intent];
+      return { ...current, [field]: next };
     });
   }
 
@@ -1263,6 +1332,17 @@ export default function App() {
               />
             ))}
           </View>
+          {fixtureStatus ? <Text style={styles.meta}>{fixtureStatus}</Text> : null}
+          {feedbackDraft.issues.includes("wrong_intent") ? (
+            <View style={styles.row}>
+              <Pressable onPress={saveFeedback} style={styles.secondaryButton}>
+                <Text style={styles.secondaryButtonText}>Save intent eval</Text>
+              </Pressable>
+              <Pressable onPress={() => setDetailTab("quality")} style={styles.secondaryButton}>
+                <Text style={styles.secondaryButtonText}>Edit eval</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
         <View style={styles.panel}>
           <Text style={styles.subhead}>Reminders</Text>
@@ -1355,59 +1435,81 @@ export default function App() {
               />
             ))}
           </View>
-          {feedbackDraft.issues.includes("wrong_intent") ? (
-            <View>
-              <Text style={styles.label}>Correct intent</Text>
-              <View style={styles.wrapRow}>
-                {intentCategories.map((intent) => (
-                  <PillButton
-                    key={intent}
-                    active={feedbackDraft.correctedIntent === intent}
-                    label={intentLabels[intent]}
-                    onPress={() =>
-                      setFeedbackDraft((current) => ({ ...current, correctedIntent: intent }))
-                    }
-                  />
-                ))}
-              </View>
-            </View>
-          ) : null}
-          {hasEntityIssue ? (
-            <TextInput
-              multiline
-              onChangeText={(requiredEntities) =>
-                setFeedbackDraft((current) => ({ ...current, requiredEntities }))
-              }
-              placeholder="Expected entities, one per line"
-              placeholderTextColor={colors.muted}
-              style={[styles.input, styles.compactArea]}
-              value={feedbackDraft.requiredEntities}
-            />
-          ) : null}
-          {hasReminderIssue ? (
-            <TextInput
-              multiline
-              onChangeText={(expectedReminders) =>
-                setFeedbackDraft((current) => ({ ...current, expectedReminders }))
-              }
-              placeholder="Expected reminders"
-              placeholderTextColor={colors.muted}
-              style={[styles.input, styles.compactArea]}
-              value={feedbackDraft.expectedReminders}
-            />
-          ) : null}
-          {hasSearchIssue ? (
-            <TextInput
-              multiline
-              onChangeText={(searchQueries) =>
-                setFeedbackDraft((current) => ({ ...current, searchQueries }))
-              }
-              placeholder="Search queries that should find this"
-              placeholderTextColor={colors.muted}
-              style={[styles.input, styles.compactArea]}
-              value={feedbackDraft.searchQueries}
-            />
-          ) : null}
+          <Text style={styles.label}>Expected intent</Text>
+          <View style={styles.wrapRow}>
+            {intentCategories.map((intent) => (
+              <PillButton
+                key={intent}
+                active={feedbackDraft.correctedIntent === intent}
+                label={intentLabels[intent]}
+                onPress={() =>
+                  setFeedbackDraft((current) => ({ ...current, correctedIntent: intent }))
+                }
+              />
+            ))}
+          </View>
+          <Text style={styles.label}>Acceptable alternate intents</Text>
+          <View style={styles.wrapRow}>
+            {intentCategories.map((intent) => (
+              <PillButton
+                key={intent}
+                active={feedbackDraft.acceptableIntents.includes(intent)}
+                label={intentLabels[intent]}
+                onPress={() => toggleDraftIntentList("acceptableIntents", intent)}
+              />
+            ))}
+          </View>
+          <Text style={styles.label}>Bad intents</Text>
+          <View style={styles.wrapRow}>
+            {intentCategories.map((intent) => (
+              <PillButton
+                key={intent}
+                active={feedbackDraft.badIntents.includes(intent)}
+                label={intentLabels[intent]}
+                onPress={() => toggleDraftIntentList("badIntents", intent)}
+              />
+            ))}
+          </View>
+          <TextInput
+            multiline
+            onChangeText={(requiredEntities) =>
+              setFeedbackDraft((current) => ({ ...current, requiredEntities }))
+            }
+            placeholder={
+              hasEntityIssue
+                ? "Expected entities, one per line"
+                : "Expected entities, one per line (optional)"
+            }
+            placeholderTextColor={colors.muted}
+            style={[styles.input, styles.compactArea]}
+            value={feedbackDraft.requiredEntities}
+          />
+          <TextInput
+            multiline
+            onChangeText={(expectedReminders) =>
+              setFeedbackDraft((current) => ({ ...current, expectedReminders }))
+            }
+            placeholder={
+              hasReminderIssue ? "Expected reminders" : "Expected reminders (optional)"
+            }
+            placeholderTextColor={colors.muted}
+            style={[styles.input, styles.compactArea]}
+            value={feedbackDraft.expectedReminders}
+          />
+          <TextInput
+            multiline
+            onChangeText={(searchQueries) =>
+              setFeedbackDraft((current) => ({ ...current, searchQueries }))
+            }
+            placeholder={
+              hasSearchIssue
+                ? "Search queries that should find this"
+                : "Search queries that should find this (optional)"
+            }
+            placeholderTextColor={colors.muted}
+            style={[styles.input, styles.compactArea]}
+            value={feedbackDraft.searchQueries}
+          />
           <TextInput
             multiline
             onChangeText={(comment) => setFeedbackDraft((current) => ({ ...current, comment }))}
@@ -1451,6 +1553,30 @@ export default function App() {
                     <Text style={styles.meta}>Looks right</Text>
                   ) : null}
                   {meta?.comment ? <Text style={styles.bodyText}>{meta.comment}</Text> : null}
+                  {fixture.acceptable_intents.length ? (
+                    <Text style={styles.meta}>
+                      Acceptable:{" "}
+                      {fixture.acceptable_intents
+                        .map((intent) =>
+                          intentCategories.includes(intent as IntentCategory)
+                            ? intentLabels[intent as IntentCategory]
+                            : intent
+                        )
+                        .join(", ")}
+                    </Text>
+                  ) : null}
+                  {fixture.bad_intents.length ? (
+                    <Text style={styles.meta}>
+                      Bad:{" "}
+                      {fixture.bad_intents
+                        .map((intent) =>
+                          intentCategories.includes(intent as IntentCategory)
+                            ? intentLabels[intent as IntentCategory]
+                            : intent
+                        )
+                        .join(", ")}
+                    </Text>
+                  ) : null}
                   <Text style={styles.meta}>
                     {fixture.required_entities.length} entities · {fixture.expected_reminders.length} reminders ·{" "}
                     {fixture.search_queries.length} search queries

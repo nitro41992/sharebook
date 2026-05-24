@@ -82,7 +82,7 @@ export class CaptureAnalysisModelError extends Error {
 }
 
 function getRoute(route?: string | null) {
-  return route || optionalEnv("DEFAULT_ANALYSIS_ROUTE") || "high_precision_openai";
+  return route || optionalEnv("DEFAULT_ANALYSIS_ROUTE") || "openai_mini";
 }
 
 function getModel(route: string) {

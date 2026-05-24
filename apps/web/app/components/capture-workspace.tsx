@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Brain,
   CheckCircle2,
+  ClipboardCheck,
   Download,
+  Eye,
   Loader2,
   RefreshCw,
-  Search,
-  Sparkles
+  Search
 } from "lucide-react";
 import { intentCategories, intentLabels, type IntentCategory } from "@sharebook/shared";
 
@@ -128,12 +130,41 @@ type EvalFixture = {
   eval_runs?: EvalRun[];
 };
 
-type InspectorTab = "review" | "source" | "debug" | "evals";
+type InspectorTab = "review" | "quality" | "source";
 
 type IntentUndo = {
   captureId: string;
   from: IntentCategory;
   to: IntentCategory;
+};
+
+const feedbackIssues = [
+  { id: "wrong_intent", label: "Wrong intent" },
+  { id: "missing_entity", label: "Missing entity" },
+  { id: "wrong_entity", label: "Wrong entity" },
+  { id: "missing_reminder", label: "Missing reminder" },
+  { id: "bad_reminder", label: "Bad reminder" },
+  { id: "misleading_rationale", label: "Misleading rationale" },
+  { id: "bad_suggested_action", label: "Bad suggested action" },
+  { id: "search_would_fail", label: "Search would fail" }
+] as const;
+
+type FeedbackIssue = (typeof feedbackIssues)[number]["id"];
+
+type QualityReport = {
+  total_feedback: number;
+  issue_counts: Record<string, number>;
+  overused_intents: Record<string, number>;
+  missing_entity_examples: string[];
+  reminder_issue_examples: string[];
+  search_issue_examples: string[];
+  comments: Array<{ label: string; comment: string }>;
+  prompt_suggestions: Array<{
+    pattern: string;
+    proposed_prompt_wording: string;
+    risk: string;
+    expected_improvement: string;
+  }>;
 };
 
 function stateClass(state: string) {
@@ -208,7 +239,7 @@ function reminderBlankReason(capture: Capture, run?: AnalysisRun) {
   if (rawReminders === 0) {
     return "The model left reminders blank. That is valid when the Capture lacks a concrete trigger; Sharebook favors fewer, higher-confidence reminders.";
   }
-  return "The latest run contained reminder-like output, but none is currently stored. Check the Debug tab for schema or persistence details.";
+  return "The latest run contained reminder-like output, but none is currently stored. Inspect output for schema or persistence details.";
 }
 
 export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture[] }) {
@@ -221,18 +252,29 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   const [tab, setTab] = useState<InspectorTab>("review");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [fixtureStatus, setFixtureStatus] = useState("");
-  const [compareStatus, setCompareStatus] = useState("");
   const [fixtures, setFixtures] = useState<EvalFixture[]>([]);
   const [evalStatus, setEvalStatus] = useState("");
   const [intentUpdatingId, setIntentUpdatingId] = useState<string | null>(null);
   const [intentUndo, setIntentUndo] = useState<IntentUndo | null>(null);
-  const [fixtureDraft, setFixtureDraft] = useState({
-    expectedIntent: "",
-    acceptableIntents: "",
-    badIntents: "",
+  const [inspectedRunId, setInspectedRunId] = useState("");
+  const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
+  const [reportStatus, setReportStatus] = useState("");
+  const [feedbackDraft, setFeedbackDraft] = useState<{
+    looksRight: boolean;
+    issues: FeedbackIssue[];
+    correctedIntent: string;
+    requiredEntities: string;
+    expectedReminders: string;
+    searchQueries: string;
+    comment: string;
+  }>({
+    looksRight: true,
+    issues: [],
+    correctedIntent: "",
     requiredEntities: "",
     expectedReminders: "",
-    searchQueries: ""
+    searchQueries: "",
+    comment: ""
   });
 
   const selected = useMemo(
@@ -242,6 +284,7 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   const selectedRuns = selected?.analysis_runs ?? [];
   const selectedRun =
     selectedRuns.find((run) => run.id === selectedRunId) ?? selectedRuns[0];
+  const inspectedRun = selectedRuns.find((run) => run.id === inspectedRunId);
   const selectedPreview = selected?.capture_assets?.find((asset) =>
     asset.mime_type?.startsWith("image/")
   );
@@ -257,6 +300,36 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
         )
       : [];
   }, [selectedRun]);
+
+  const hasEntityIssue =
+    feedbackDraft.issues.includes("missing_entity") || feedbackDraft.issues.includes("wrong_entity");
+  const hasReminderIssue =
+    feedbackDraft.issues.includes("missing_reminder") || feedbackDraft.issues.includes("bad_reminder");
+  const hasSearchIssue = feedbackDraft.issues.includes("search_would_fail");
+
+  function toggleIssue(issue: FeedbackIssue) {
+    setFeedbackDraft((draft) => {
+      const issues = draft.issues.includes(issue)
+        ? draft.issues.filter((item) => item !== issue)
+        : [...draft.issues, issue];
+      return { ...draft, issues, looksRight: issues.length === 0 };
+    });
+  }
+
+  function parseFeedbackNotes(notes: string | null) {
+    if (!notes) return null;
+    try {
+      const parsed = JSON.parse(notes) as {
+        kind?: string;
+        issues?: string[];
+        comment?: string;
+        looksRight?: boolean;
+      };
+      return parsed.kind === "mini_feedback" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
 
   async function refreshCaptures(nextSelectedId?: string) {
     const response = await fetch("/api/captures");
@@ -284,7 +357,7 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
     await refreshCaptures(json.capture.id);
   }
 
-  async function analyzeCapture(captureId: string, route = "high_precision_openai") {
+  async function analyzeCapture(captureId: string, route = "openai_mini") {
     if (intentUndo?.captureId === captureId) setIntentUndo(null);
     setAnalyzingIds((current) => new Set(current).add(captureId));
     setCaptures((current) =>
@@ -420,9 +493,19 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
     setFixtures(json.fixtures ?? []);
   }, [selected?.id]);
 
-  async function saveFixture() {
+  async function saveFeedback() {
     if (!selected) return;
-    setFixtureStatus("Saving fixture...");
+    setFixtureStatus("Saving feedback...");
+    const feedbackNotes = JSON.stringify({
+      kind: "mini_feedback",
+      looksRight: feedbackDraft.looksRight,
+      issues: feedbackDraft.issues,
+      comment: feedbackDraft.comment.trim(),
+      analysisRunId: selectedRun?.id ?? null,
+      modelRoute: selectedRun?.model_route ?? "openai_mini",
+      promptVersion: selectedRun?.prompt_version ?? null,
+      schemaVersion: selectedRun?.schema_version ?? null
+    });
     const response = await fetch("/api/evals/fixtures", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -430,24 +513,25 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
         captureId: selected.id,
         label: captureTitle(selected),
         expectedIntent:
-          fixtureDraft.expectedIntent || selected.current_save_intent || selected.default_intent,
-        acceptableIntents: linesToList(fixtureDraft.acceptableIntents),
-        badIntents: linesToList(fixtureDraft.badIntents),
-        requiredEntities: linesToList(fixtureDraft.requiredEntities),
-        expectedReminders: linesToList(fixtureDraft.expectedReminders),
-        searchQueries: linesToList(fixtureDraft.searchQueries)
+          feedbackDraft.correctedIntent || selected.current_save_intent || selected.default_intent,
+        acceptableIntents: [],
+        badIntents: [],
+        requiredEntities: linesToList(feedbackDraft.requiredEntities),
+        expectedReminders: linesToList(feedbackDraft.expectedReminders),
+        searchQueries: linesToList(feedbackDraft.searchQueries),
+        notes: feedbackNotes
       })
     });
     const json = await readJsonResponse(response);
-    setFixtureStatus(response.ok ? `Saved fixture ${json.fixture?.id?.slice(0, 8)}` : json.error);
+    setFixtureStatus(response.ok ? `Saved feedback ${json.fixture?.id?.slice(0, 8)}` : json.error);
     if (response.ok) {
       setIntentUndo(null);
       await loadFixtures(selected.id);
     }
   }
 
-  async function runEval(fixtureId: string, modelRoute = "high_precision_openai") {
-    setEvalStatus(`Running ${modelRoute} eval...`);
+  async function runEval(fixtureId: string, modelRoute = "openai_mini") {
+    setEvalStatus("Checking Mini...");
     const response = await fetch("/api/evals/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -463,21 +547,16 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
     if (selected) await refreshCaptures(selected.id);
   }
 
-  async function compareModels() {
-    if (!selected) return;
-    setCompareStatus("Comparing models...");
-    const response = await fetch("/api/analyze/compare", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ captureId: selected.id })
-    });
+  async function loadQualityReport() {
+    setReportStatus("Building report...");
+    const response = await fetch("/api/evals/quality-report");
     const json = await readJsonResponse(response);
     if (!response.ok) {
-      setCompareStatus(json.error ?? "Comparison failed");
+      setReportStatus(json.error ?? "Could not build report");
       return;
     }
-    setCompareStatus(`Saved ${json.results?.length ?? 0} comparison runs`);
-    await refreshCaptures(selected.id);
+    setQualityReport(json.report ?? null);
+    setReportStatus("Report ready");
   }
 
   function exportDebugBundle() {
@@ -502,19 +581,22 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   useEffect(() => {
     if (!selected) return;
     setSelectedRunId(selected.analysis_runs?.[0]?.id ?? "");
+    setInspectedRunId("");
     setIntentUndo((undo) => (undo?.captureId === selected.id ? undo : null));
-    setFixtureDraft({
-      expectedIntent: selected.current_save_intent ?? selected.default_intent ?? "",
-      acceptableIntents: "",
-      badIntents: "",
+    setFeedbackDraft({
+      looksRight: true,
+      issues: [],
+      correctedIntent: selected.current_save_intent ?? selected.default_intent ?? "",
       requiredEntities: listToLines(
         selected.captured_entities?.slice(0, 4).map((entity) => entity.display_name)
       ),
       expectedReminders: "",
-      searchQueries: ""
+      searchQueries: "",
+      comment: ""
     });
     setFixtureStatus("");
     setEvalStatus("");
+    setReportStatus("");
     loadFixtures(selected.id);
   }, [loadFixtures, selected]);
 
@@ -630,6 +712,36 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
             <p className="muted small">No visible search matches yet.</p>
           ) : null}
         </div>
+        <div className="section quality-overview">
+          <div>
+            <div className="eyebrow">Quality report</div>
+            <p className="body">
+              Review saved feedback across all captures and turn recurring misses into prompt
+              improvement suggestions.
+            </p>
+          </div>
+          <button className="button secondary" onClick={loadQualityReport}>
+            <AlertTriangle size={16} />
+            Build all-feedback report
+          </button>
+          {reportStatus ? <p className="muted small">{reportStatus}</p> : null}
+          {qualityReport ? (
+            <div className="quality-report">
+              <span className="chip ready">{qualityReport.total_feedback} feedback items</span>
+              <JsonBlock value={qualityReport.issue_counts} />
+              {qualityReport.prompt_suggestions.map((suggestion) => (
+                <div className="eval-run" key={suggestion.pattern}>
+                  <strong>{suggestion.pattern}</strong>
+                  <p className="muted small">{suggestion.proposed_prompt_wording}</p>
+                  <p className="muted small">Risk: {suggestion.risk}</p>
+                  <p className="muted small">
+                    Expected improvement: {suggestion.expected_improvement}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <div className="capture-list">
           {captures.length ? (
             captures.map((capture) => {
@@ -669,7 +781,7 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                     }}
                   >
                     {isAnalyzing ? <Loader2 size={15} /> : capture.analysis_state === "failed" ? <RefreshCw size={15} /> : <Brain size={15} />}
-                    {isAnalyzing ? "Running" : capture.analysis_state === "failed" ? "Retry" : "Run"}
+                    {isAnalyzing ? "Running" : capture.analysis_state === "failed" ? "Retry" : "Run Mini"}
                   </button>
                 </div>
               );
@@ -706,19 +818,22 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                   ? "Analyzing"
                   : selected.analysis_state === "failed"
                     ? "Retry analysis"
-                    : "Run analysis"}
+                    : "Run Mini analysis"}
               </button>
-              <button
-                className="button secondary"
-                onClick={() => analyzeCapture(selected.id, "openai_mini")}
-                disabled={analyzingIds.has(selected.id)}
-              >
-                <Sparkles size={16} />
-                Mini
-              </button>
+              {selectedRun ? (
+                <button
+                  className="button secondary"
+                  onClick={() =>
+                    setInspectedRunId((current) => (current === selectedRun.id ? "" : selectedRun.id))
+                  }
+                >
+                  <Eye size={16} />
+                  Inspect output
+                </button>
+              ) : null}
             </div>
             <div className="tabs">
-              {(["review", "source", "debug", "evals"] as InspectorTab[]).map((item) => (
+              {(["review", "quality", "source"] as InspectorTab[]).map((item) => (
                 <button
                   key={item}
                   className={`tab ${tab === item ? "active" : ""}`}
@@ -728,6 +843,53 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                 </button>
               ))}
             </div>
+
+            {inspectedRun ? (
+              <div className="panel inspect-panel">
+                <div className="toolbar">
+                  <strong>Output inspection</strong>
+                  <button className="button secondary" onClick={exportDebugBundle}>
+                    <Download size={16} />
+                    Export bundle
+                  </button>
+                  <span className={`chip ${inspectedRun.status === "failed" ? "bad" : "ready"}`}>
+                    {inspectedRun.status ?? "unknown"}
+                  </span>
+                  <span className="chip">{inspectedRun.model_route ?? inspectedRun.model}</span>
+                </div>
+                <div className="debug-grid">
+                  <div>
+                    <div className="label">Prompt/schema</div>
+                    <p className="muted small">
+                      {inspectedRun.prompt_version} · {inspectedRun.schema_version}
+                    </p>
+                  </div>
+                  <div>
+                    <div className="label">Latency</div>
+                    <p className="muted small">
+                      {inspectedRun.latency_ms ? `${inspectedRun.latency_ms} ms` : "Unknown"}
+                    </p>
+                  </div>
+                  <div>
+                    <div className="label">Cost</div>
+                    <p className="muted small">
+                      {inspectedRun.cost_estimate == null ? "Not estimated" : inspectedRun.cost_estimate}
+                    </p>
+                  </div>
+                </div>
+                <details className="debug-details">
+                  <summary>Raw and structured output</summary>
+                  <div className="label">Schema errors</div>
+                  <JsonBlock value={inspectedRun.schema_errors} />
+                  <div className="label">Input snapshot</div>
+                  <JsonBlock value={inspectedRun.input_snapshot} />
+                  <div className="label">Raw model output</div>
+                  <JsonBlock value={inspectedRun.raw_model_output} />
+                  <div className="label">Structured output / repaired JSON</div>
+                  <JsonBlock value={inspectedRun.extracted_json ?? inspectedRun.repaired_output} />
+                </details>
+              </div>
+            ) : null}
 
             {tab === "review" ? (
               <>
@@ -871,262 +1033,211 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
               </>
             ) : null}
 
-            {tab === "debug" ? (
+            {tab === "quality" ? (
               <>
                 <div className="panel">
-                  <div className="toolbar">
-                    <button className="button secondary" onClick={exportDebugBundle}>
-                      <Download size={16} />
-                      Export bundle
-                    </button>
-                    {selectedRun ? (
-                      <>
-                        <span className={`chip ${selectedRun.status === "failed" ? "bad" : "ready"}`}>
-                          {selectedRun.status ?? "unknown"}
-                        </span>
-                        <span className="chip">{selectedRun.provider}</span>
-                        <span className="chip">{selectedRun.model}</span>
-                      </>
+                  <div className="label">Mini feedback</div>
+                  <p className="muted small">
+                    Mark what is wrong with the current Mini result. Leave it as looks right when the
+                    output matches why you saved this.
+                  </p>
+                  <label className="feedback-check">
+                    <input
+                      type="checkbox"
+                      checked={feedbackDraft.looksRight}
+                      onChange={(event) =>
+                        setFeedbackDraft((draft) => ({
+                          ...draft,
+                          looksRight: event.target.checked,
+                          issues: event.target.checked ? [] : draft.issues
+                        }))
+                      }
+                    />
+                    <span>Looks right</span>
+                  </label>
+                  <div className="issue-grid">
+                    {feedbackIssues.map((issue) => (
+                      <label className="feedback-check" key={issue.id}>
+                        <input
+                          type="checkbox"
+                          checked={feedbackDraft.issues.includes(issue.id)}
+                          onChange={() => toggleIssue(issue.id)}
+                        />
+                        <span>{issue.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="fixture-grid" style={{ marginTop: 14 }}>
+                    {feedbackDraft.issues.includes("wrong_intent") ? (
+                      <label className="field">
+                        <span className="label">Correct intent</span>
+                        <select
+                          className="select"
+                          value={feedbackDraft.correctedIntent}
+                          onChange={(event) =>
+                            setFeedbackDraft((draft) => ({
+                              ...draft,
+                              correctedIntent: event.target.value
+                            }))
+                          }
+                        >
+                          <option value="">Use current intent</option>
+                          {intentCategories.map((intent) => (
+                            <option key={intent} value={intent}>
+                              {intentLabels[intent]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     ) : null}
-                  </div>
-                </div>
-                {selectedRun ? (
-                  <>
-                    <div className="panel debug-grid">
-                      <div>
-                        <div className="label">Prompt/schema</div>
-                        <p className="muted small">
-                          {selectedRun.prompt_version} · {selectedRun.schema_version}
-                        </p>
-                      </div>
-                      <div>
-                        <div className="label">Latency</div>
-                        <p className="muted small">
-                          {selectedRun.latency_ms ? `${selectedRun.latency_ms} ms` : "Unknown"}
-                        </p>
-                      </div>
-                      <div>
-                        <div className="label">Cost</div>
-                        <p className="muted small">
-                          {selectedRun.cost_estimate == null ? "Not estimated" : selectedRun.cost_estimate}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="panel">
-                      <div className="label">Usage</div>
-                      <JsonBlock value={selectedRun.usage} />
-                    </div>
-                    <div className="panel">
-                      <div className="label">Schema errors</div>
-                      <JsonBlock value={selectedRun.schema_errors} />
-                    </div>
-                    <div className="panel">
-                      <div className="label">Input snapshot</div>
-                      <JsonBlock value={selectedRun.input_snapshot} />
-                    </div>
-                    <div className="panel">
-                      <div className="label">Raw model output</div>
-                      <JsonBlock value={selectedRun.raw_model_output} />
-                    </div>
-                    <div className="panel">
-                      <div className="label">Structured output / repaired JSON</div>
-                      <JsonBlock value={selectedRun.extracted_json ?? selectedRun.repaired_output} />
-                    </div>
-                  </>
-                ) : (
-                  <div className="panel">
-                    <p className="muted small">No analysis run recorded yet.</p>
-                  </div>
-                )}
-              </>
-            ) : null}
-
-            {tab === "evals" ? (
-              <>
-                <div className="panel">
-                  <div className="label">Fixture labels</div>
-                  <div className="fixture-grid" style={{ marginTop: 10 }}>
+                    {hasEntityIssue ? (
+                      <label className="field">
+                        <span className="label">Expected entities</span>
+                        <textarea
+                          className="textarea compact"
+                          value={feedbackDraft.requiredEntities}
+                          onChange={(event) =>
+                            setFeedbackDraft((draft) => ({
+                              ...draft,
+                              requiredEntities: event.target.value
+                            }))
+                          }
+                          placeholder="One entity per line or comma-separated"
+                        />
+                      </label>
+                    ) : null}
+                    {hasReminderIssue ? (
+                      <label className="field">
+                        <span className="label">Expected reminders</span>
+                        <textarea
+                          className="textarea compact"
+                          value={feedbackDraft.expectedReminders}
+                          onChange={(event) =>
+                            setFeedbackDraft((draft) => ({
+                              ...draft,
+                              expectedReminders: event.target.value
+                            }))
+                          }
+                          placeholder="Concrete reminder trigger or rationale"
+                        />
+                      </label>
+                    ) : null}
+                    {hasSearchIssue ? (
+                      <label className="field">
+                        <span className="label">Search queries that should find this</span>
+                        <textarea
+                          className="textarea compact"
+                          value={feedbackDraft.searchQueries}
+                          onChange={(event) =>
+                            setFeedbackDraft((draft) => ({
+                              ...draft,
+                              searchQueries: event.target.value
+                            }))
+                          }
+                          placeholder="that ramen place, bus ticket to Easton"
+                        />
+                      </label>
+                    ) : null}
                     <label className="field">
-                      <span className="label">Expected intent</span>
-                      <select
-                        className="select"
-                        value={fixtureDraft.expectedIntent}
-                        onChange={(event) =>
-                          setFixtureDraft((draft) => ({
-                            ...draft,
-                            expectedIntent: event.target.value
-                          }))
-                        }
-                      >
-                        <option value="">None</option>
-                        {intentCategories.map((intent) => (
-                          <option key={intent} value={intent}>
-                            {intentLabels[intent]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span className="label">Acceptable intents</span>
+                      <span className="label">Optional comment</span>
                       <textarea
                         className="textarea compact"
-                        value={fixtureDraft.acceptableIntents}
+                        value={feedbackDraft.comment}
                         onChange={(event) =>
-                          setFixtureDraft((draft) => ({
+                          setFeedbackDraft((draft) => ({
                             ...draft,
-                            acceptableIntents: event.target.value
+                            comment: event.target.value
                           }))
                         }
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="label">Bad intents</span>
-                      <textarea
-                        className="textarea compact"
-                        value={fixtureDraft.badIntents}
-                        onChange={(event) =>
-                          setFixtureDraft((draft) => ({
-                            ...draft,
-                            badIntents: event.target.value
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="label">Required entities</span>
-                      <textarea
-                        className="textarea compact"
-                        value={fixtureDraft.requiredEntities}
-                        onChange={(event) =>
-                          setFixtureDraft((draft) => ({
-                            ...draft,
-                            requiredEntities: event.target.value
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="label">Expected reminders</span>
-                      <textarea
-                        className="textarea compact"
-                        value={fixtureDraft.expectedReminders}
-                        onChange={(event) =>
-                          setFixtureDraft((draft) => ({
-                            ...draft,
-                            expectedReminders: event.target.value
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="label">Search queries</span>
-                      <textarea
-                        className="textarea compact"
-                        value={fixtureDraft.searchQueries}
-                        onChange={(event) =>
-                          setFixtureDraft((draft) => ({
-                            ...draft,
-                            searchQueries: event.target.value
-                          }))
-                        }
+                        placeholder="I saved this to try the workout, not just watch it."
                       />
                     </label>
                   </div>
                   <div className="toolbar">
-                    <button className="button secondary" onClick={saveFixture}>
+                    <button className="button secondary" onClick={saveFeedback}>
                       <CheckCircle2 size={16} />
-                      Save as fixture
-                    </button>
-                    <button className="button secondary" onClick={compareModels}>
-                      <Sparkles size={16} />
-                      Compare models
+                      Save feedback
                     </button>
                   </div>
                   {fixtureStatus ? <p className="muted small">{fixtureStatus}</p> : null}
-                  {compareStatus ? <p className="muted small">{compareStatus}</p> : null}
                   {evalStatus ? <p className="muted small">{evalStatus}</p> : null}
                 </div>
                 <div className="panel">
-                  <div className="label">Saved fixtures</div>
+                  <div className="label">Saved feedback</div>
                   <div className="suggestion-list" style={{ marginTop: 10 }}>
                     {fixtures.length ? (
-                      fixtures.map((fixture) => (
-                        <div className="suggestion-item" key={fixture.id}>
-                          <div className="toolbar">
-                            <strong>{fixture.label || `Fixture ${fixture.id.slice(0, 8)}`}</strong>
-                            {fixture.expected_intent ? (
-                              <span className="chip intent">{intentLabels[fixture.expected_intent]}</span>
+                      fixtures.map((fixture) => {
+                        const meta = parseFeedbackNotes(fixture.notes);
+                        return (
+                          <div className="suggestion-item" key={fixture.id}>
+                            <div className="toolbar">
+                              <strong>{fixture.label || `Feedback ${fixture.id.slice(0, 8)}`}</strong>
+                              {fixture.expected_intent ? (
+                                <span className="chip intent">{intentLabels[fixture.expected_intent]}</span>
+                              ) : null}
+                              {meta?.looksRight ? <span className="chip ready">looks right</span> : null}
+                            </div>
+                            {meta?.issues?.length ? (
+                              <p className="muted small">Issues: {meta.issues.join(", ")}</p>
+                            ) : null}
+                            {meta?.comment ? <p className="muted small">{meta.comment}</p> : null}
+                            <p className="muted small">
+                              {fixture.required_entities.length} entities ·{" "}
+                              {fixture.expected_reminders.length} reminders ·{" "}
+                              {fixture.search_queries.length} search queries
+                            </p>
+                            <div className="toolbar">
+                              <button className="button secondary" onClick={() => runEval(fixture.id)}>
+                                <ClipboardCheck size={16} />
+                                Check Mini
+                              </button>
+                            </div>
+                            {fixture.eval_runs?.length ? (
+                              <div className="eval-run-list">
+                                {fixture.eval_runs.map((run) => (
+                                  <div className="eval-run" key={run.id}>
+                                    <span className={`chip ${run.passed ? "ready" : "warn"}`}>
+                                      {run.passed ? "passed" : "review"}
+                                    </span>
+                                    <span className="muted small">
+                                      {run.model_route} · {new Date(run.created_at).toLocaleString()}
+                                    </span>
+                                    <p className="muted small">
+                                      intent {run.score.intent_pass ? "ok" : "miss"} · entities{" "}
+                                      {run.score.entity_pass ? "ok" : "miss"} · reminders{" "}
+                                      {run.score.reminder_pass ? "ok" : "miss"} · search{" "}
+                                      {run.score.search_pass ? "ok" : "miss"}
+                                    </p>
+                                    {run.score.missing_entities?.length ? (
+                                      <p className="muted small">
+                                        Missing entities: {run.score.missing_entities.join(", ")}
+                                      </p>
+                                    ) : null}
+                                    {run.score.missing_reminders?.length ? (
+                                      <p className="muted small">
+                                        Missing reminders: {run.score.missing_reminders.join(", ")}
+                                      </p>
+                                    ) : null}
+                                    {run.score.search_misses?.length ? (
+                                      <p className="muted small">
+                                        Search misses: {run.score.search_misses.join(", ")}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
                             ) : null}
                           </div>
-                          <p className="muted small">
-                            {fixture.required_entities.length} entities ·{" "}
-                            {fixture.expected_reminders.length} reminders ·{" "}
-                            {fixture.search_queries.length} search queries
-                          </p>
-                          <div className="toolbar">
-                            <button
-                              className="button secondary"
-                              onClick={() => runEval(fixture.id)}
-                            >
-                              <Brain size={16} />
-                              Eval
-                            </button>
-                            <button
-                              className="button secondary"
-                              onClick={() => runEval(fixture.id, "openai_mini")}
-                            >
-                              <Sparkles size={16} />
-                              Mini eval
-                            </button>
-                          </div>
-                          {fixture.eval_runs?.length ? (
-                            <div className="eval-run-list">
-                              {fixture.eval_runs.map((run) => (
-                                <div className="eval-run" key={run.id}>
-                                  <span className={`chip ${run.passed ? "ready" : "warn"}`}>
-                                    {run.passed ? "passed" : "review"}
-                                  </span>
-                                  <span className="muted small">
-                                    {run.model_route} · {new Date(run.created_at).toLocaleString()}
-                                  </span>
-                                  <p className="muted small">
-                                    intent {run.score.intent_pass ? "ok" : "miss"} · entities{" "}
-                                    {run.score.entity_pass ? "ok" : "miss"} · reminders{" "}
-                                    {run.score.reminder_pass ? "ok" : "miss"} · search{" "}
-                                    {run.score.search_pass ? "ok" : "miss"}
-                                  </p>
-                                  {run.score.missing_entities?.length ? (
-                                    <p className="muted small">
-                                      Missing entities: {run.score.missing_entities.join(", ")}
-                                    </p>
-                                  ) : null}
-                                  {run.score.missing_reminders?.length ? (
-                                    <p className="muted small">
-                                      Missing reminders: {run.score.missing_reminders.join(", ")}
-                                    </p>
-                                  ) : null}
-                                  {run.score.search_misses?.length ? (
-                                    <p className="muted small">
-                                      Search misses: {run.score.search_misses.join(", ")}
-                                    </p>
-                                  ) : null}
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))
+                        );
+                      })
                     ) : (
-                      <p className="muted small">No fixtures saved for this capture yet.</p>
+                      <p className="muted small">No feedback saved for this capture yet.</p>
                     )}
                   </div>
                 </div>
                 <div className="panel">
-                  <div className="label">Recent runs</div>
-                  <p className="muted small">
-                    Review a run to inspect its raw model output, repaired JSON, schema errors, and
-                    input snapshot in the Debug tab.
-                  </p>
+                  <div className="label">Recent Mini runs</div>
+                  <p className="muted small">Inspect a run only when you need raw output or schema details.</p>
                   <div className="suggestion-list" style={{ marginTop: 10 }}>
                     {selected.analysis_runs?.length ? (
                       selected.analysis_runs.map((run) => (
@@ -1148,10 +1259,10 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                             className="button secondary"
                             onClick={() => {
                               setSelectedRunId(run.id);
-                              setTab("debug");
+                              setInspectedRunId((current) => (current === run.id ? "" : run.id));
                             }}
                           >
-                            Review output
+                            Inspect output
                           </button>
                         </div>
                       ))

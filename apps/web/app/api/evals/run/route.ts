@@ -110,7 +110,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error?.message ?? "Fixture not found" }, { status: 404 });
   }
 
-  const route = body.modelRoute ?? "high_precision_openai";
+  const route = body.modelRoute ?? "openai_mini";
   const analysisInput = await loadCaptureAnalysisInput(supabase, {
     userId: user.id,
     captureId: fixture.capture_id,

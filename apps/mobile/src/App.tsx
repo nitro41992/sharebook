@@ -1,7 +1,7 @@
 import "react-native-url-polyfill/auto";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { createClient, type Session } from "@supabase/supabase-js";
+import { createClient, processLock, type Session } from "@supabase/supabase-js";
 import * as ImagePicker from "expo-image-picker";
 import { clearSharedPayloads, useIncomingShare } from "expo-sharing";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -81,7 +82,8 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     storage: AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false
+    detectSessionInUrl: false,
+    lock: processLock
   }
 });
 
@@ -272,6 +274,14 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        supabase.auth.startAutoRefresh();
+      } else {
+        supabase.auth.stopAutoRefresh();
+      }
+    });
+
     async function handleAuthUrl(url: string) {
       try {
         const nextSession = await createSessionFromAuthUrl(url);
@@ -298,6 +308,7 @@ export default function App() {
     });
     return () => {
       mounted = false;
+      appStateSubscription.remove();
       linkingSubscription.remove();
       subscription.unsubscribe();
     };

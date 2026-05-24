@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Download,
+  Pencil,
+  Trash2,
   Eye,
   Loader2,
   RefreshCw,
@@ -253,6 +255,7 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
   const [selectedRunId, setSelectedRunId] = useState("");
   const [fixtureStatus, setFixtureStatus] = useState("");
   const [fixtures, setFixtures] = useState<EvalFixture[]>([]);
+  const [editingFeedbackId, setEditingFeedbackId] = useState("");
   const [evalStatus, setEvalStatus] = useState("");
   const [intentUpdatingId, setIntentUpdatingId] = useState<string | null>(null);
   const [intentUndo, setIntentUndo] = useState<IntentUndo | null>(null);
@@ -329,6 +332,39 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
     } catch {
       return null;
     }
+  }
+
+  function resetFeedbackDraft() {
+    if (!selected) return;
+    setEditingFeedbackId("");
+    setFeedbackDraft({
+      looksRight: true,
+      issues: [],
+      correctedIntent: selected.current_save_intent ?? selected.default_intent ?? "",
+      requiredEntities: listToLines(
+        selected.captured_entities?.slice(0, 4).map((entity) => entity.display_name)
+      ),
+      expectedReminders: "",
+      searchQueries: "",
+      comment: ""
+    });
+  }
+
+  function editFeedback(fixture: EvalFixture) {
+    const meta = parseFeedbackNotes(fixture.notes);
+    setEditingFeedbackId(fixture.id);
+    setFeedbackDraft({
+      looksRight: meta?.looksRight ?? !meta?.issues?.length,
+      issues: (meta?.issues ?? []).filter((issue): issue is FeedbackIssue =>
+        feedbackIssues.some((item) => item.id === issue)
+      ),
+      correctedIntent: fixture.expected_intent ?? "",
+      requiredEntities: listToLines(fixture.required_entities),
+      expectedReminders: listToLines(fixture.expected_reminders),
+      searchQueries: listToLines(fixture.search_queries),
+      comment: meta?.comment ?? fixture.notes ?? ""
+    });
+    setFixtureStatus(`Editing feedback ${fixture.id.slice(0, 8)}`);
   }
 
   async function refreshCaptures(nextSelectedId?: string) {
@@ -495,7 +531,7 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
 
   async function saveFeedback() {
     if (!selected) return;
-    setFixtureStatus("Saving feedback...");
+    setFixtureStatus(editingFeedbackId ? "Updating feedback..." : "Saving feedback...");
     const feedbackNotes = JSON.stringify({
       kind: "mini_feedback",
       looksRight: feedbackDraft.looksRight,
@@ -506,28 +542,53 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
       promptVersion: selectedRun?.prompt_version ?? null,
       schemaVersion: selectedRun?.schema_version ?? null
     });
+    const payload = {
+      ...(editingFeedbackId ? { fixtureId: editingFeedbackId } : { captureId: selected.id }),
+      label: captureTitle(selected),
+      expectedIntent:
+        feedbackDraft.correctedIntent || selected.current_save_intent || selected.default_intent,
+      acceptableIntents: [],
+      badIntents: [],
+      requiredEntities: linesToList(feedbackDraft.requiredEntities),
+      expectedReminders: linesToList(feedbackDraft.expectedReminders),
+      searchQueries: linesToList(feedbackDraft.searchQueries),
+      notes: feedbackNotes
+    };
     const response = await fetch("/api/evals/fixtures", {
-      method: "POST",
+      method: editingFeedbackId ? "PATCH" : "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        captureId: selected.id,
-        label: captureTitle(selected),
-        expectedIntent:
-          feedbackDraft.correctedIntent || selected.current_save_intent || selected.default_intent,
-        acceptableIntents: [],
-        badIntents: [],
-        requiredEntities: linesToList(feedbackDraft.requiredEntities),
-        expectedReminders: linesToList(feedbackDraft.expectedReminders),
-        searchQueries: linesToList(feedbackDraft.searchQueries),
-        notes: feedbackNotes
-      })
+      body: JSON.stringify(payload)
     });
     const json = await readJsonResponse(response);
-    setFixtureStatus(response.ok ? `Saved feedback ${json.fixture?.id?.slice(0, 8)}` : json.error);
+    setFixtureStatus(
+      response.ok
+        ? `${editingFeedbackId ? "Updated" : "Saved"} feedback ${json.fixture?.id?.slice(0, 8)}`
+        : json.error
+    );
     if (response.ok) {
       setIntentUndo(null);
+      setEditingFeedbackId("");
       await loadFixtures(selected.id);
     }
+  }
+
+  async function deleteFeedback(fixtureId: string) {
+    if (!selected) return;
+    const confirmed = window.confirm("Delete this feedback?");
+    if (!confirmed) return;
+    setFixtureStatus("Deleting feedback...");
+    const response = await fetch(
+      `/api/evals/fixtures?fixtureId=${encodeURIComponent(fixtureId)}`,
+      { method: "DELETE" }
+    );
+    const json = await readJsonResponse(response);
+    if (!response.ok) {
+      setFixtureStatus(json.error ?? "Could not delete feedback");
+      return;
+    }
+    if (editingFeedbackId === fixtureId) resetFeedbackDraft();
+    setFixtureStatus("Deleted feedback");
+    await loadFixtures(selected.id);
   }
 
   async function runEval(fixtureId: string, modelRoute = "openai_mini") {
@@ -595,6 +656,7 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
       comment: ""
     });
     setFixtureStatus("");
+    setEditingFeedbackId("");
     setEvalStatus("");
     setReportStatus("");
     loadFixtures(selected.id);
@@ -1036,7 +1098,10 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
             {tab === "quality" ? (
               <>
                 <div className="panel">
-                  <div className="label">Mini feedback</div>
+                  <div className="toolbar">
+                    <div className="label">Mini feedback</div>
+                    {editingFeedbackId ? <span className="chip warn">editing</span> : null}
+                  </div>
                   <p className="muted small">
                     Mark what is wrong with the current Mini result. Leave it as looks right when the
                     output matches why you saved this.
@@ -1156,8 +1221,13 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                   <div className="toolbar">
                     <button className="button secondary" onClick={saveFeedback}>
                       <CheckCircle2 size={16} />
-                      Save feedback
+                      {editingFeedbackId ? "Update feedback" : "Save feedback"}
                     </button>
+                    {editingFeedbackId ? (
+                      <button className="button ghost" onClick={resetFeedbackDraft}>
+                        Cancel edit
+                      </button>
+                    ) : null}
                   </div>
                   {fixtureStatus ? <p className="muted small">{fixtureStatus}</p> : null}
                   {evalStatus ? <p className="muted small">{evalStatus}</p> : null}
@@ -1189,7 +1259,15 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
                             <div className="toolbar">
                               <button className="button secondary" onClick={() => runEval(fixture.id)}>
                                 <ClipboardCheck size={16} />
-                                Check Mini
+                                Test current prompt
+                              </button>
+                              <button className="button secondary" onClick={() => editFeedback(fixture)}>
+                                <Pencil size={16} />
+                                Edit
+                              </button>
+                              <button className="button secondary" onClick={() => deleteFeedback(fixture.id)}>
+                                <Trash2 size={16} />
+                                Delete
                               </button>
                             </div>
                             {fixture.eval_runs?.length ? (

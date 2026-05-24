@@ -14,6 +14,19 @@ function textList(value: unknown) {
   return [];
 }
 
+type FeedbackBody = {
+  fixtureId?: string;
+  captureId?: string;
+  label?: string;
+  expectedIntent?: string | null;
+  acceptableIntents?: string[] | string;
+  badIntents?: string[] | string;
+  requiredEntities?: string[] | string;
+  expectedReminders?: string[] | string;
+  searchQueries?: string[] | string;
+  notes?: string | null;
+};
+
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -51,17 +64,7 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = (await request.json()) as {
-    captureId?: string;
-    label?: string;
-    expectedIntent?: string | null;
-    acceptableIntents?: string[] | string;
-    badIntents?: string[] | string;
-    requiredEntities?: string[];
-    expectedReminders?: string[] | string;
-    searchQueries?: string[];
-    notes?: string | null;
-  };
+  const body = (await request.json()) as FeedbackBody;
 
   if (!body.captureId) {
     return NextResponse.json({ error: "captureId is required" }, { status: 400 });
@@ -102,4 +105,56 @@ export async function POST(request: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ fixture });
+}
+
+export async function PATCH(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = (await request.json()) as FeedbackBody;
+  if (!body.fixtureId) {
+    return NextResponse.json({ error: "fixtureId is required" }, { status: 400 });
+  }
+
+  const supabase = createSupabaseAdminClient();
+  const { data: fixture, error } = await supabase
+    .from("eval_fixtures")
+    .update({
+      label: body.label,
+      expected_intent: body.expectedIntent ?? null,
+      acceptable_intents: textList(body.acceptableIntents),
+      bad_intents: textList(body.badIntents),
+      required_entities: textList(body.requiredEntities),
+      expected_reminders: textList(body.expectedReminders),
+      search_queries: textList(body.searchQueries),
+      notes: body.notes ?? null
+    })
+    .eq("user_id", user.id)
+    .eq("id", body.fixtureId)
+    .select("*")
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ fixture });
+}
+
+export async function DELETE(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const url = new URL(request.url);
+  const fixtureId = url.searchParams.get("fixtureId");
+  if (!fixtureId) {
+    return NextResponse.json({ error: "fixtureId is required" }, { status: 400 });
+  }
+
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("eval_fixtures")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("id", fixtureId);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ deleted: true });
 }

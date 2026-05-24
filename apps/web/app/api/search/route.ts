@@ -3,7 +3,7 @@ import { searchCapturesForUser } from "../../lib/search";
 import { createSupabaseAdminClient, getCurrentUser } from "../../lib/supabase-server";
 
 export async function GET(request: Request) {
-  const user = await getCurrentUser();
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(request.url);

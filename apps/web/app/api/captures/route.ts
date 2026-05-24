@@ -23,8 +23,19 @@ function inferCaptureType(input: {
   return "unknown";
 }
 
-export async function GET() {
-  const user = await getCurrentUser();
+function inferSourceApp(sourceUrl?: string | null) {
+  if (!sourceUrl) return null;
+  if (/instagram\.com/i.test(sourceUrl)) return "Instagram";
+  if (/tiktok\.com/i.test(sourceUrl)) return "TikTok";
+  if (/reddit\.com/i.test(sourceUrl)) return "Reddit";
+  if (/youtube\.com|youtu\.be/i.test(sourceUrl)) return "YouTube";
+  if (/maps\.app\.goo\.gl|google\.[^/]+\/maps|maps\.google\./i.test(sourceUrl)) return "Maps";
+  if (/x\.com|twitter\.com/i.test(sourceUrl)) return "X";
+  return "Browser";
+}
+
+export async function GET(request: Request) {
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const supabase = createSupabaseAdminClient();
@@ -38,13 +49,13 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const formData = await request.formData();
   const sourceUrl = formData.get("sourceUrl")?.toString().trim() || null;
   const sourceText = formData.get("sourceText")?.toString().trim() || null;
-  const sourceApp = formData.get("sourceApp")?.toString().trim() || null;
+  const sourceApp = formData.get("sourceApp")?.toString().trim() || inferSourceApp(sourceUrl);
   const title = formData.get("title")?.toString().trim() || null;
   const file = formData.get("asset");
   const asset = file instanceof File && file.size > 0 ? file : null;
@@ -112,7 +123,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const user = await getCurrentUser();
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = (await request.json()) as {

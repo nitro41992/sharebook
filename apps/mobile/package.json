@@ -1,0 +1,29 @@
+{
+  "name": "@sharebook/mobile",
+  "private": true,
+  "version": "0.1.0",
+  "main": "index.js",
+  "scripts": {
+    "android": "expo run:android",
+    "build:dogfood": "node scripts/build-dogfood-apk.mjs",
+    "device": "node scripts/android-device.mjs",
+    "dev": "expo start",
+    "prebuild": "expo prebuild --platform android",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^3.1.0",
+    "@supabase/supabase-js": "^2.106.1",
+    "expo": "^56.0.4",
+    "expo-image-picker": "^56.0.13",
+    "expo-sharing": "^56.0.13",
+    "expo-status-bar": "^56.0.4",
+    "react": "^19.2.6",
+    "react-native": "^0.85.3",
+    "react-native-url-polyfill": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.15",
+    "typescript": "^5.8.3"
+  }
+}

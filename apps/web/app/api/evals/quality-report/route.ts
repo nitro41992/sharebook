@@ -205,8 +205,8 @@ function suggestionForIssue(issue: string) {
   }
 }
 
-export async function GET() {
-  const user = await getCurrentUser();
+export async function GET(request: Request) {
+  const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const supabase = createSupabaseAdminClient();

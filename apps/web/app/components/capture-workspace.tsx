@@ -400,6 +400,7 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
       return;
     }
     await refreshCaptures(json.capture.id);
+    await analyzeCapture(json.capture.id);
   }
 
   async function analyzeCapture(captureId: string, route = "openai_mini") {
@@ -709,23 +710,8 @@ export function CaptureWorkspace({ initialCaptures }: { initialCaptures: Capture
             <span className="label">Image or screenshot</span>
             <input className="input" name="asset" type="file" accept="image/*" />
           </label>
-          <label className="field">
-            <span className="label">Source app</span>
-            <select className="select" name="sourceApp" defaultValue="">
-              <option value="">Unknown</option>
-              <option>Instagram</option>
-              <option>TikTok</option>
-              <option>Reddit</option>
-              <option>YouTube</option>
-              <option>Maps</option>
-              <option>Browser</option>
-              <option>Photos</option>
-              <option>Messages</option>
-              <option>Other</option>
-            </select>
-          </label>
           <button className="button" disabled={creating}>
-            {creating ? "Saving..." : "Save capture"}
+            {creating ? "Saving..." : "Save and analyze"}
           </button>
         </form>
       </aside>

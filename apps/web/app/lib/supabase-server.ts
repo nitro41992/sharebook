@@ -48,7 +48,33 @@ export function createSupabaseAdminClient() {
   );
 }
 
-export async function getCurrentUser() {
+function bearerToken(request?: Request) {
+  const header = request?.headers.get("authorization");
+  if (!header?.toLowerCase().startsWith("bearer ")) return null;
+  return header.slice("bearer ".length).trim() || null;
+}
+
+export async function getCurrentUser(request?: Request) {
+  const token = bearerToken(request);
+  if (token) {
+    const supabase = createClient(
+      requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
+      requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false
+        }
+      }
+    );
+    const {
+      data: { user },
+      error
+    } = await supabase.auth.getUser(token);
+
+    if (!error && user) return user;
+  }
+
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },

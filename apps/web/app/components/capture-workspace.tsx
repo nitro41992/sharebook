@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import {
   AlertTriangle,
   Brain,
@@ -1168,9 +1169,23 @@ export function CaptureWorkspace({
                 <div className="panel">
                   <div className="label">Source preview</div>
                   {selectedPreview?.signed_url ? (
-                    <img className="preview" src={selectedPreview.signed_url} alt="Capture upload" />
+                    <Image
+                      alt="Capture upload"
+                      className="preview"
+                      height={900}
+                      src={selectedPreview.signed_url}
+                      unoptimized
+                      width={900}
+                    />
                   ) : selected.thumbnail_url ? (
-                    <img className="preview" src={selected.thumbnail_url} alt="Capture thumbnail" />
+                    <Image
+                      alt="Capture thumbnail"
+                      className="preview"
+                      height={900}
+                      src={selected.thumbnail_url}
+                      unoptimized
+                      width={900}
+                    />
                   ) : (
                     <p className="muted small">No image preview for this capture.</p>
                   )}

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { CaptureTypeSchema, IntentCategorySchema } from "@sharebook/shared";
-import { loadCapturesForUser } from "../../lib/capture-loader";
+import {
+  loadCaptureForUser,
+  loadCaptureSummariesForUser,
+  loadCapturesForUser
+} from "../../lib/capture-loader";
 import { createSupabaseAdminClient, getCurrentUser } from "../../lib/supabase-server";
 
 function inferCaptureType(input: {
@@ -38,8 +42,32 @@ export async function GET(request: Request) {
   const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const url = new URL(request.url);
+  const view = url.searchParams.get("view");
+  const captureId = url.searchParams.get("captureId");
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Number(limitParam) : undefined;
+  const cursor = url.searchParams.get("cursor");
   const supabase = createSupabaseAdminClient();
   try {
+    if (view === "summary") {
+      const result = await loadCaptureSummariesForUser(supabase, {
+        userId: user.id,
+        limit: typeof limit === "number" && Number.isFinite(limit) ? limit : undefined,
+        cursor
+      });
+      return NextResponse.json(result);
+    }
+
+    if (view === "detail") {
+      if (!captureId) {
+        return NextResponse.json({ error: "captureId is required" }, { status: 400 });
+      }
+      const capture = await loadCaptureForUser(supabase, { userId: user.id, captureId });
+      if (!capture) return NextResponse.json({ error: "Capture not found" }, { status: 404 });
+      return NextResponse.json({ capture });
+    }
+
     const captures = await loadCapturesForUser(supabase, user.id);
     return NextResponse.json({ captures });
   } catch (error) {

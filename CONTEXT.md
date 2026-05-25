@@ -53,8 +53,32 @@ An interface where the user creates an Explicit Capture, such as a mobile share 
 _Avoid_: Importer, scraper
 
 **Review Inbox**:
-The surface where users review Captures, inspect inferred Save Intent, apply One-Tap Correction, add Context Notes, search, and create Reminders.
-_Avoid_: Bookmark list, folder
+The surface where users triage Captures and suggestions that need lightweight decisions, such as low-confidence intent, One-Tap Correction, Context Notes, suggested Reminders, suggested Collections, failed analysis, and Quick Edit actions. Review Inbox may use segments or tabs, but it should remain one surface rather than separate suggestion queues.
+_Avoid_: Bookmark list, folder, separate suggestions inbox
+
+**Retrieval Lens**:
+A user-facing view over Captures and related entities that helps the user find saved things by a primary access pattern, such as meaning, place, time, or recency. Search, Map, Agenda, and Review Inbox are Retrieval Lenses, not separate saved object types.
+_Avoid_: Item type, folder, separate app
+
+**Today**:
+The default home Retrieval Lens that surfaces what matters now from recent Captures, due or upcoming Reminders, unresolved review needs, and relevant place or time context. When no Captures exist, Today becomes a first-capture empty state rather than an empty dashboard.
+_Avoid_: Dashboard, activity feed, productivity homepage
+
+**Map**:
+A Retrieval Lens that shows Captures associated with place-like Captured Entities, such as restaurants, venues, stores, hotels, trip ideas, or event locations. High-confidence captured places may appear on Map automatically, while uncertain places should go to Review Inbox before appearing as normal pins. Map should not show where the user happened to be when saving unless that location is part of the Capture's meaning or a user-approved Reminder trigger.
+_Avoid_: Location history, check-in map, GPS trail
+
+**Agenda**:
+A Retrieval Lens for time-relevant Captures and Confirmed Reminders. Confirmed Reminders appear as scheduled agenda items, while unconfirmed reminder suggestions or date-like Captures should go to a review inbox rather than becoming obligations.
+_Avoid_: Calendar replacement, automatic schedule, notification queue
+
+**Library**:
+The Retrieval Lens hub for browsing saved Captures by recency, place, time, Collection, and archived state. Library should feel like organized memory rather than a filing cabinet or power-user database.
+_Avoid_: Folder tree, archive dump, database browser
+
+**Search**:
+A fuzzy-memory Retrieval Lens for finding Captures by meaning, entity, Save Intent, Collection, place, time, source, or remembered context. Search may include command-like filters for Collections, entities, intent, Map, and Agenda, but it should not default to a generic chat assistant.
+_Avoid_: Chatbot, database query builder, tag search
 
 **Capture Context**:
 The surrounding signals available when a Capture is created, such as source app, share text, screenshot content, timestamp, collection name, sender, calendar context, travel context, location, or a one-tap correction.
@@ -63,6 +87,18 @@ _Avoid_: Metadata, note
 **Analyzer Context**:
 A bounded set of relevant prior Captures, Reminders, Collections, and preference signals made available to Capture Analysis so Sharebook can interpret the current Capture without reading the user's full history.
 _Avoid_: Raw history, memory dump, prompt history
+
+**Quiet Confidence**:
+Sharebook's trust posture for AI output: quietly persist low-risk, reversible decisions while asking before creating interruptions, obligations, or new organizational structures. Default Intent and high-confidence existing Collection attachment may persist; Confirmed Reminders and new Collections require user acceptance.
+_Avoid_: Autopilot, always ask, confidence score UI
+
+**Confidence State**:
+A user-facing confidence label for an AI prediction, expressed as Looks right, Maybe, Not sure, or Couldn't tell rather than a numeric score. Confidence States should be paired with concise rationale when the user is asked to trust or correct a prediction.
+_Avoid_: Confidence percentage, model score, probability
+
+**Product Language Token**:
+A consumer-facing label that may change without changing the domain model, such as the app name, Confidence State labels, or UI state names. Product Language Tokens should be centralized in product copy or design tokens rather than treated as canonical domain terms.
+_Avoid_: Hardcoded brand copy, domain object name
 
 **One-Tap Correction**:
 An optional lightweight user action that confirms or changes the inferred Save Intent without requiring typing.
@@ -77,8 +113,8 @@ Optional free text added by the user when One-Tap Correction is not expressive e
 _Avoid_: Required rationale, mandatory note
 
 **Quick Edit**:
-A compact post-capture amendment using pills, shorthand, or short text to adjust Save Intent, create a Reminder, or attach a Capture to a Collection without opening a full form.
-_Avoid_: Gamification, tagging workflow, command language
+A compact post-capture amendment that reads like an editable sentence with tappable chips for Save Intent, suggested Reminder, Collection attachment, and optional Context Note. Captured Entities may appear as supporting context, but Quick Edit is not the primary entity-editing surface.
+_Avoid_: Gamification, tagging workflow, command language, entity editor, correction form
 
 **Visual Understanding**:
 Interpretation of screenshot or image content as people, places, things, scenes, UI state, and implied meaning.
@@ -103,6 +139,10 @@ _Avoid_: AI nudge, automatic notification
 **Reminder Rationale**:
 The short reason shown with a Reminder that explains why the Capture is being resurfaced, derived from Save Intent, Capture Context, or Context Note.
 _Avoid_: Generic notification text, AI nudge
+
+**Capture Completion Notification**:
+A notification that Capture Analysis has finished and the user can review inferred intent, suggested Reminders, suggested Collections, or Quick Edit actions. It is not a Reminder and does not create a future notification obligation.
+_Avoid_: Reminder, AI nudge, engagement notification
 
 **Capture State**:
 The user's lifecycle state for a Capture, such as active, archived, or deleted.

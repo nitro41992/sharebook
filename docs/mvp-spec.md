@@ -100,6 +100,8 @@ MVP capture surfaces:
 - Paste URL or text
 - Manual text note
 
+First-run activation should drive users toward the native share flow because Sharebook's wedge is saving from the flow of another app. Paste, upload, and manual note capture should remain available as fallback Capture Surfaces for onboarding, simulator testing, and sources that do not expose useful share payloads.
+
 Near-term follow-up:
 
 - Web app upload and paste
@@ -156,6 +158,12 @@ Cost posture:
 9. User may create a Reminder, search later, or let the Capture remain in the Review Inbox.
 
 Capture must not wait for AI analysis. Correction must improve the Capture but must not be required to save it.
+
+The in-app Capture FAB should open a compact Capture Sheet for paste link/text, manual note, and image or screenshot upload. It may detect a copied URL and offer to save it directly. Native share remains the preferred capture path when the user is already inside another app.
+
+A Capture Completion Notification should open a focused Quick Edit surface for the completed Capture, not a full database-like detail view. Quick Edit should let the user accept or change inferred intent, review suggested Reminders, adjust Collection attachment, add a Context Note, or open full Capture detail. AI-predicted intent, Reminder, Collection, and location or place suggestions should each include a concise rationale when shown. If the notification is dismissed, Sharebook keeps the Capture with its Default Intent, does not create unconfirmed Reminders, may keep high-confidence attachment to an existing Collection, and leaves the completed Capture and suggestions available in the Review Inbox for later triage.
+
+The first consumer design sprint should optimize for the share-to-understanding loop: native share, immediate Capture Receipt, background Capture Analysis progress, Capture Completion Notification, and focused Quick Edit. Instant save is the prerequisite trust moment; useful post-analysis Quick Edit is the first differentiated wow moment.
 
 Capture latency is a core product constraint. The user should receive a Capture Receipt immediately and should be able to leave the source app without waiting for enrichment, intent inference, Collection suggestions, or Reminder suggestions.
 
@@ -363,6 +371,15 @@ AI may suggest Reminders, but the user must confirm before a Reminder is schedul
 
 A Reminder should include a Reminder Rationale: a short explanation of why the Capture is resurfacing, derived from Save Intent, Capture Context, or Context Note. The notification motif is: "Here is the thing you saved, and here is why you wanted it."
 
+User-facing reminder suggestion states should distinguish suggestions from scheduled obligations:
+
+- `Reminder suggested`: AI proposed a Reminder, but it is not scheduled.
+- `Reminder set`: the user accepted or created a Confirmed Reminder.
+- `Needs time`: the user wants a Reminder, but no trigger has been selected yet.
+- `No reminder`: no Reminder is scheduled or suggested for the Capture.
+
+If a user dismisses a Reminder suggestion, Sharebook should record that as internal feedback for Analyzer Context and quality evaluation, but it should not persist a separate `skipped` label in the UI.
+
 MVP trigger types:
 
 - specific time
@@ -406,6 +423,32 @@ It should support:
 
 Avoid making the Review Inbox feel like folders or manual bookmark management.
 
+## Consumer App Navigation
+
+The consumer mobile app should use a small primary navigation model:
+
+- Today
+- Search
+- Library
+- Settings
+
+Capture should remain globally available through a prominent floating action button or platform-native share flow rather than becoming a bottom-navigation destination.
+
+Today is the default home surface. When no Captures exist, Today should become a first-capture empty state rather than an empty dashboard.
+
+Today should surface a gentle review module when suggestions or uncertain predictions are waiting, such as `2 saves need a quick look`. This module should make Maybe, Not sure, and Couldn't tell items visible and actionable without making Today feel like a chore list.
+
+Library should contain prominent Retrieval Lenses over saved Captures, including All, Map, Agenda, Collections, and Archived. Map and Agenda are important lenses, but they should not be separate bottom-navigation destinations for the first consumer design.
+
+Map place-placement states should be:
+
+- `Place saved`: attached to a captured place and visible on Map.
+- `Maybe [Place]`: place suggestion that needs confirmation or correction.
+- `No place`: no place-like entity is attached.
+- `Couldn't place`: Sharebook found location-like signal but could not resolve it cleanly.
+
+Consumer-facing state names, confidence labels, and the app name should be treated as product language tokens rather than scattered hardcoded strings. The current name Sharebook is provisional and may change.
+
 ## Collections
 
 Collection is a first-class grouping object for related Captures. Plan is not first-class for MVP.
@@ -425,7 +468,14 @@ A Capture may belong to zero, one, or many Collections. A Collection may be crea
 
 Collections should not replace Save Intent. A Capture in `SF trip` can still have a Save Intent like `try place`, `watch later`, or `compare or research`.
 
-Collection creation and attachment should be hybrid: Sharebook may suggest Collections, but the user should confirm before creating a new Collection or attaching a Capture to one. Existing Collections may appear as lightweight chips during capture review.
+Collection creation and attachment should be hybrid: Sharebook may auto-attach a Capture to an existing Collection when confidence is high, and the user should be able to quickly move it to a different or new Collection. Sharebook should require confirmation before creating a new Collection. Existing Collections may appear as lightweight chips during capture review.
+
+User-facing Collection states should stay simple:
+
+- `In [Collection]`: attached to a Collection.
+- `Maybe [Collection]`: suggested attachment that needs user confirmation or correction.
+- `No collection`: not attached to a Collection.
+- `New collection suggested: [Name]`: proposed new Collection, requiring confirmation before creation.
 
 ## Search
 
@@ -556,10 +606,13 @@ MVP should avoid requiring calendar, location, contacts, or background access on
 Suggested permission order:
 
 1. Share/upload/paste with no broad device permissions.
-2. Notifications when the user creates the first Reminder.
-3. Location only for place-based Reminders.
-4. Calendar only for event/trip-aware Reminders.
-5. Contacts only for person-based actions.
+2. Notifications after the first successful Capture, framed narrowly around Capture Analysis progress and completion.
+3. Reminder notifications when the user creates or accepts the first Confirmed Reminder.
+4. Location only for place-based Reminders.
+5. Calendar only for event/trip-aware Reminders.
+6. Contacts only for person-based actions.
+
+Capture Completion Notifications are separate from Reminders. They may tell the user that background Capture Analysis finished and that Quick Edit, suggested Reminders, or suggested Collections are ready to review, but they must not schedule future resurfacing unless the user accepts a Confirmed Reminder.
 
 Location may be a core feature, but the system location prompt should be requested just-in-time from a location-powered action such as `Remind when nearby`, not during generic onboarding. Sharebook should prefer foreground or while-in-use location first, avoid background location until the feature clearly requires it, and offer time-based Reminders as a fallback when location is denied or skipped.
 

@@ -493,6 +493,16 @@
   outline: 0;
 }
 
+.textInput {
+  min-height: 48px;
+  border: 1px solid var(--prototype-line);
+  border-radius: 14px;
+  background: var(--prototype-surface-raised);
+  color: var(--prototype-ink);
+  padding: 0 12px;
+  outline: 0;
+}
+
 .actionList {
   display: grid;
   gap: 8px;
@@ -852,6 +862,204 @@
   padding: 9px 12px;
   font-size: 13px;
   font-weight: 720;
+}
+
+.searchField {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 50px;
+  border: 1px solid var(--prototype-line);
+  border-radius: 16px;
+  background: var(--prototype-surface-raised);
+  color: var(--prototype-muted);
+  padding: 0 13px;
+}
+
+.searchField input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--prototype-ink);
+  font: inherit;
+  outline: 0;
+}
+
+.filterRow {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.filterRow button,
+.collectionBadge {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border: 1px solid var(--prototype-line);
+  border-radius: 999px;
+  background: var(--prototype-surface-raised);
+  color: var(--prototype-muted);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.filterRow button {
+  cursor: pointer;
+}
+
+.filterRow button[data-active="true"],
+.collectionBadge {
+  border-color: color-mix(in oklch, var(--prototype-accent) 34%, var(--prototype-line));
+  background: var(--prototype-accent-soft);
+  color: var(--prototype-accent-strong);
+}
+
+.resultList,
+.collectionList {
+  display: grid;
+  gap: 2px;
+}
+
+.resultRow,
+.collectionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 68px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--prototype-line) 72%, transparent);
+  background: transparent;
+  color: var(--prototype-ink);
+  cursor: pointer;
+  padding: 11px 0;
+  text-align: left;
+}
+
+.resultRow strong,
+.resultRow small,
+.resultRow em,
+.collectionRow strong,
+.collectionRow small,
+.collectionRow em {
+  display: block;
+}
+
+.resultRow small,
+.collectionRow small {
+  margin-top: 3px;
+  color: var(--prototype-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.resultRow em,
+.collectionRow em {
+  margin-top: 3px;
+  color: color-mix(in oklch, var(--prototype-accent-strong) 72%, var(--prototype-muted));
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.3;
+}
+
+.collectionRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.collectionIcon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  background: var(--prototype-accent-soft);
+  color: var(--prototype-accent-strong);
+}
+
+.createCollection,
+.searchNote,
+.emptyCollectionPreview,
+.collectionHeader {
+  border: 1px solid var(--prototype-line);
+  border-radius: 16px;
+  background: var(--prototype-surface-raised);
+}
+
+.createCollection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  color: var(--prototype-accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.searchNote {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  color: var(--prototype-muted);
+  padding: 12px;
+}
+
+.searchNote p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.collectionHeader {
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+}
+
+.collectionHeader h2,
+.collectionHeader span {
+  margin: 0;
+}
+
+.collectionHeader h2 {
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+.collectionHeader span {
+  color: var(--prototype-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.emptyCollectionPreview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 11px;
+  padding: 14px;
+}
+
+.emptyCollectionPreview h3,
+.emptyCollectionPreview p {
+  margin: 0;
+}
+
+.emptyCollectionPreview h3 {
+  font-size: 17px;
+}
+
+.emptyCollectionPreview p {
+  margin-top: 4px;
+  color: var(--prototype-muted);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .bottomNav {

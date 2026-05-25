@@ -5,6 +5,8 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  Folder,
+  FolderPlus,
   Image as ImageIcon,
   Library,
   Link2,
@@ -14,6 +16,7 @@ import {
   Search,
   Settings,
   Share2,
+  SlidersHorizontal,
   StickyNote
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -43,7 +46,11 @@ const flows = [
   { id: "receipt", label: "Capture Receipt", shortLabel: "Saved" },
   { id: "notification", label: "Completion Notification", shortLabel: "Ready" },
   { id: "quick-edit", label: "Quick Edit", shortLabel: "Edit" },
-  { id: "today-review", label: "Today With Review", shortLabel: "Review" }
+  { id: "today-review", label: "Today With Review", shortLabel: "Review" },
+  { id: "search", label: "Search", shortLabel: "Search" },
+  { id: "collections", label: "Collections", shortLabel: "Library" },
+  { id: "collection-detail", label: "Collection Detail", shortLabel: "Collection" },
+  { id: "new-collection", label: "Create Empty Collection", shortLabel: "Create" }
 ] as const;
 
 type FlowId = (typeof flows)[number]["id"];
@@ -66,6 +73,42 @@ const mockCapture = {
 const nearbyCaptures = [
   { title: "Ramen reel", meta: "try this place | reminder suggestion | NYC restaurants" },
   { title: "Concert poster", meta: "date found | needs review" }
+];
+
+const collectionResults = [
+  {
+    title: "Ramen reel from Instagram",
+    source: "Instagram reel",
+    meta: "Matched place: SoHo | intent: try this place",
+    collection: "NYC restaurants"
+  },
+  {
+    title: "Late-night noodle list",
+    source: "Safari article",
+    meta: "Matched collection and ramen",
+    collection: "NYC restaurants"
+  }
+];
+
+const collections = [
+  {
+    name: "NYC restaurants",
+    count: 2,
+    detail: "Ramen, dinner lists, places to try",
+    suggestionState: "Available for future suggestions"
+  },
+  {
+    name: "Japan trip",
+    count: 0,
+    detail: "Empty collection",
+    suggestionState: "AI can suggest matching saves later"
+  },
+  {
+    name: "Gift ideas",
+    count: 1,
+    detail: "Products and notes",
+    suggestionState: "Available for future suggestions"
+  }
 ];
 
 const reviewItems = [
@@ -163,12 +206,17 @@ function PhoneScreen({
   flowId: FlowId;
   setFlowId: (flowId: FlowId) => void;
 }) {
-  const showFab = flowId === "zero" || flowId === "today-review";
-  const showNavigation = flowId === "zero" || flowId === "today-review";
+  const showFab = flowId === "zero" || flowId === "today-review" || flowId === "search" || flowId === "collections";
+  const showNavigation =
+    flowId === "zero" ||
+    flowId === "today-review" ||
+    flowId === "search" ||
+    flowId === "collections" ||
+    flowId === "collection-detail";
 
   return (
     <div className={styles.appSurface}>
-      <TopBar title={flowId === "sheet" ? "Capture" : flowId === "quick-edit" ? "Quick Edit" : "Today"} />
+      <TopBar title={titleForFlow(flowId)} setFlowId={setFlowId} />
       <div className={`${styles.screenBody} ${showNavigation ? "" : styles.screenBodyFocused}`}>
         {flowId === "zero" ? <ZeroCaptureToday setFlowId={setFlowId} /> : null}
         {flowId === "sheet" ? <CaptureSheet setFlowId={setFlowId} /> : null}
@@ -176,8 +224,12 @@ function PhoneScreen({
         {flowId === "notification" ? <CompletionNotification setFlowId={setFlowId} /> : null}
         {flowId === "quick-edit" ? <QuickEdit setFlowId={setFlowId} /> : null}
         {flowId === "today-review" ? <TodayReview setFlowId={setFlowId} /> : null}
+        {flowId === "search" ? <SearchScreen setFlowId={setFlowId} /> : null}
+        {flowId === "collections" ? <CollectionsScreen setFlowId={setFlowId} /> : null}
+        {flowId === "collection-detail" ? <CollectionDetail setFlowId={setFlowId} /> : null}
+        {flowId === "new-collection" ? <NewCollection setFlowId={setFlowId} /> : null}
       </div>
-      {showNavigation ? <BottomNav /> : null}
+      {showNavigation ? <BottomNav flowId={flowId} setFlowId={setFlowId} /> : null}
       {showFab ? (
         <button
           aria-label="New capture"
@@ -193,14 +245,22 @@ function PhoneScreen({
   );
 }
 
-function TopBar({ title }: { title: string }) {
+function titleForFlow(flowId: FlowId) {
+  if (flowId === "sheet") return "Capture";
+  if (flowId === "quick-edit") return "Quick Edit";
+  if (flowId === "search") return "Search";
+  if (flowId === "collections" || flowId === "collection-detail" || flowId === "new-collection") return "Library";
+  return "Today";
+}
+
+function TopBar({ title, setFlowId }: { title: string; setFlowId: (flowId: FlowId) => void }) {
   return (
     <header className={styles.topBar}>
       <div>
         <p>{language.appName}</p>
         <h3>{title}</h3>
       </div>
-      <button aria-label="Search" className={styles.iconButton} title="Search" type="button">
+      <button aria-label="Search" className={styles.iconButton} onClick={() => setFlowId("search")} title="Search" type="button">
         <Search aria-hidden="true" size={18} />
       </button>
     </header>
@@ -379,12 +439,16 @@ function QuickEdit({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
         <p>
           Reminder suggestion: <Chip label="Review reminder suggestion">{mockCapture.reminder}</Chip>.
         </p>
+        <p>
+          Place suggestion: <Chip label="Review place suggestion">{mockCapture.place}</Chip>.
+        </p>
       </div>
 
       <div className={styles.rationaleList}>
         <Rationale label="Intent" text={mockCapture.rationale.intent} />
         <Rationale label="Collection" text={mockCapture.rationale.collection} />
         <Rationale label="Reminder" text={mockCapture.rationale.reminder} />
+        <Rationale label="Place" text={`${mockCapture.rationale.place} Not based on device location.`} />
       </div>
 
       <section className={styles.suggestionBlock} aria-label="Reminder suggestion">
@@ -468,6 +532,148 @@ function TodayReview({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
   );
 }
 
+function SearchScreen({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
+  return (
+    <section className={styles.screenStack}>
+      <label className={styles.searchField}>
+        <Search aria-hidden="true" size={18} />
+        <input defaultValue="ramen near soho" aria-label="Search saved captures" />
+      </label>
+
+      <div className={styles.filterRow} aria-label="Search filters">
+        <button data-active="true" type="button">All</button>
+        <button data-active="true" onClick={() => setFlowId("collection-detail")} type="button">
+          NYC restaurants
+        </button>
+        <button type="button">Place</button>
+        <button type="button">Time</button>
+      </div>
+
+      <section className={styles.plainSection}>
+        <h3>Results</h3>
+        <div className={styles.resultList}>
+          {collectionResults.map((item) => (
+            <button className={styles.resultRow} key={item.title} onClick={() => setFlowId("collection-detail")} type="button">
+              <span>
+                <strong>{item.title}</strong>
+                <small>{item.source}</small>
+                <em>{item.meta}</em>
+              </span>
+              <span className={styles.collectionBadge}>{item.collection}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className={styles.searchNote}>
+        <SlidersHorizontal aria-hidden="true" size={17} />
+        <p>Production search should combine semantic memory with collection, place, time, source, and intent filters.</p>
+      </section>
+    </section>
+  );
+}
+
+function CollectionsScreen({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
+  return (
+    <section className={styles.screenStack}>
+      <div className={styles.todayHeader}>
+        <p className={styles.todayDate}>Library lens</p>
+        <h2>Collections</h2>
+      </div>
+
+      <button className={styles.createCollection} onClick={() => setFlowId("new-collection")} type="button">
+        <FolderPlus aria-hidden="true" size={18} />
+        <span>Create empty collection</span>
+      </button>
+
+      <div className={styles.collectionList}>
+        {collections.map((item) => (
+          <button className={styles.collectionRow} key={item.name} onClick={() => setFlowId("collection-detail")} type="button">
+            <span className={styles.collectionIcon}>
+              <Folder aria-hidden="true" size={18} />
+            </span>
+            <span>
+              <strong>{item.name}</strong>
+              <small>{item.count === 0 ? "No saves yet" : `${item.count} saves`} | {item.detail}</small>
+              <em>{item.suggestionState}</em>
+            </span>
+            <ChevronRight aria-hidden="true" size={17} />
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CollectionDetail({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
+  return (
+    <section className={styles.screenStack}>
+      <div className={styles.collectionHeader}>
+        <p className={styles.todayDate}>Collection</p>
+        <h2>NYC restaurants</h2>
+        <span>2 saves. Sharebook can suggest future captures here, but nothing new is created without review.</span>
+      </div>
+
+      <button className={styles.reviewModule} onClick={() => setFlowId("quick-edit")} type="button">
+        <div>
+          <p>{language.states.collectionSuggestion}</p>
+          <span>Ramen reel may belong here</span>
+        </div>
+        <ChevronRight aria-hidden="true" size={19} />
+      </button>
+
+      <section className={styles.plainSection}>
+        <h3>All in this collection</h3>
+        <div className={styles.resultList}>
+          {collectionResults.map((item) => (
+            <button className={styles.captureRow} key={item.title} type="button">
+              <span>
+                <strong>{item.title}</strong>
+                <small>{item.meta}</small>
+              </span>
+              <ChevronRight aria-hidden="true" size={17} />
+            </button>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function NewCollection({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
+  return (
+    <section className={styles.screenStack}>
+      <div className={styles.todayHeader}>
+        <p className={styles.todayDate}>New collection</p>
+        <h2>Create before you need it</h2>
+      </div>
+
+      <label className={styles.fieldLabel}>
+        <span>Name</span>
+        <input className={styles.textInput} defaultValue="Japan trip" aria-label="Collection name" />
+      </label>
+
+      <section className={styles.emptyCollectionPreview}>
+        <FolderPlus aria-hidden="true" size={20} />
+        <div>
+          <h3>Japan trip</h3>
+          <p>No saves yet. Sharebook can suggest matching captures here after analysis.</p>
+        </div>
+      </section>
+
+      <div className={styles.bottomActions}>
+        <button className={styles.primaryAction} onClick={() => setFlowId("collections")} type="button">
+          <Check aria-hidden="true" size={18} />
+          <span>Create collection</span>
+        </button>
+        <button className={styles.textAction} onClick={() => setFlowId("collections")} type="button">
+          Cancel
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function ActionButton({
   children,
   icon,
@@ -485,18 +691,35 @@ function ActionButton({
   );
 }
 
-function BottomNav() {
+function BottomNav({
+  flowId,
+  setFlowId
+}: {
+  flowId: FlowId;
+  setFlowId: (flowId: FlowId) => void;
+}) {
   const nav = [
-    { label: "Today", icon: <CalendarClock aria-hidden="true" size={17} /> },
-    { label: "Search", icon: <Search aria-hidden="true" size={17} /> },
-    { label: "Library", icon: <Library aria-hidden="true" size={17} /> },
-    { label: "Settings", icon: <Settings aria-hidden="true" size={17} /> }
+    { label: "Today", flow: "today-review" as FlowId, active: flowId === "zero" || flowId === "today-review", icon: <CalendarClock aria-hidden="true" size={17} /> },
+    { label: "Search", flow: "search" as FlowId, active: flowId === "search", icon: <Search aria-hidden="true" size={17} /> },
+    {
+      label: "Library",
+      flow: "collections" as FlowId,
+      active: flowId === "collections" || flowId === "collection-detail" || flowId === "new-collection",
+      icon: <Library aria-hidden="true" size={17} />
+    },
+    { label: "Settings", flow: "zero" as FlowId, active: false, icon: <Settings aria-hidden="true" size={17} /> }
   ];
 
   return (
     <nav className={styles.bottomNav} aria-label="Primary">
       {nav.map((item) => (
-        <button className={styles.navButton} data-active={item.label === "Today"} key={item.label} type="button">
+        <button
+          className={styles.navButton}
+          data-active={item.active}
+          key={item.label}
+          onClick={() => setFlowId(item.flow)}
+          type="button"
+        >
           {item.icon}
           <span>{item.label}</span>
         </button>

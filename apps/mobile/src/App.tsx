@@ -25,7 +25,12 @@ import {
   TextInput,
   View
 } from "react-native";
-import { intentCategories, intentLabels, type IntentCategory } from "@sharebook/shared";
+import {
+  intentCategories,
+  intentLabels,
+  parseQuickEdit,
+  type IntentCategory
+} from "@sharebook/shared";
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -114,6 +119,17 @@ type SearchResult = {
   captures?: Capture;
 };
 
+type Reminder = {
+  id: string;
+  trigger_type: string;
+  trigger_value: string;
+  due_at: string | null;
+  status: string;
+  rationale: string;
+  created_from: string;
+  reminder_captures?: Array<{ capture_id: string }>;
+};
+
 type EvalRun = {
   id: string;
   model_route: string;
@@ -178,7 +194,7 @@ type CaptureDraft = {
 };
 
 type CaptureAsset = NonNullable<Capture["capture_assets"]>[number];
-type MediaKind = "image" | "video";
+type MediaKind = "image" | "video" | "audio";
 type SourceMedia = {
   kind: MediaKind;
   url: string;
@@ -243,6 +259,7 @@ function extractUrl(value: string) {
 
 const directImageUrlPattern = /\.(avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i;
 const directVideoUrlPattern = /\.(mp4|m4v|mov|webm|ogv|ogg)(?:[?#].*)?$/i;
+const directAudioUrlPattern = /\.(aac|aif|aiff|flac|m4a|mp3|oga|opus|wav)(?:[?#].*)?$/i;
 
 function safeHttpUrl(value?: string | null) {
   if (!value) return null;
@@ -258,12 +275,14 @@ function safeHttpUrl(value?: string | null) {
 function mediaKindFromMime(mimeType?: string | null): MediaKind | null {
   if (mimeType?.startsWith("image/")) return "image";
   if (mimeType?.startsWith("video/")) return "video";
+  if (mimeType?.startsWith("audio/")) return "audio";
   return null;
 }
 
 function mediaKindFromUrl(url: string): MediaKind | null {
   if (directImageUrlPattern.test(url)) return "image";
   if (directVideoUrlPattern.test(url)) return "video";
+  if (directAudioUrlPattern.test(url)) return "audio";
   return null;
 }
 
@@ -280,6 +299,18 @@ function linesToList(value: string) {
 
 function listToLines(value?: string[]) {
   return (value ?? []).join("\n");
+}
+
+function friendlyDate(value?: string | null) {
+  if (!value) return "No time set";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function stringify(value: unknown) {
@@ -788,6 +819,10 @@ export default function App() {
   const [savingPassword, setSavingPassword] = useState(false);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [quickEditText, setQuickEditText] = useState("");
+  const [quickEditStatus, setQuickEditStatus] = useState("");
+  const [reminderUpdatingId, setReminderUpdatingId] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [detailTab, setDetailTab] = useState<DetailTab>("review");
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
@@ -852,6 +887,12 @@ export default function App() {
         )
       : [];
   }, [selected, selectedRun]);
+  const selectedReminders = useMemo(() => {
+    if (!selected) return [];
+    return reminders.filter((reminder) =>
+      reminder.reminder_captures?.some((link) => link.capture_id === selected.id)
+    );
+  }, [reminders, selected]);
 
   const hasEntityIssue =
     feedbackDraft.issues.includes("missing_entity") || feedbackDraft.issues.includes("wrong_entity");
@@ -949,6 +990,19 @@ export default function App() {
     [session]
   );
 
+  const loadReminders = useCallback(
+    async (activeSession = session) => {
+      if (!activeSession) return;
+      try {
+        const json = await apiFetch("/api/reminders", activeSession);
+        setReminders(json.reminders ?? []);
+      } catch (error) {
+        setQuickEditStatus(error instanceof Error ? error.message : "Could not load reminders");
+      }
+    },
+    [session]
+  );
+
   useEffect(() => {
     let mounted = true;
     const appStateSubscription = AppState.addEventListener("change", (state) => {
@@ -992,8 +1046,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (session) refreshCaptures(session);
-  }, [refreshCaptures, session]);
+    if (session) {
+      refreshCaptures(session);
+      loadReminders(session);
+    }
+  }, [loadReminders, refreshCaptures, session]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -1057,14 +1114,18 @@ export default function App() {
       (shared?.contentType === "image" || contentMimeType.startsWith("image/")) && shared?.contentUri;
     const isVideo =
       (shared?.contentType === "video" || contentMimeType.startsWith("video/")) && shared?.contentUri;
+    const isAudio =
+      (shared?.contentType === "audio" || contentMimeType.startsWith("audio/")) && shared?.contentUri;
     setDraft({
       sourceUrl,
       sourceText: sourceUrl ? rawValue.replace(sourceUrl, "").trim() : rawValue,
-      asset: isImage || isVideo
+      asset: isImage || isVideo || isAudio
         ? {
             uri: shared.contentUri!,
-            name: shared.originalName ?? (isVideo ? "shared-video.mp4" : "shared-image.jpg"),
-            type: contentMimeType || (isVideo ? "video/mp4" : "image/jpeg"),
+            name:
+              shared.originalName ??
+              (isAudio ? "shared-audio.m4a" : isVideo ? "shared-video.mp4" : "shared-image.jpg"),
+            type: contentMimeType || (isAudio ? "audio/mp4" : isVideo ? "video/mp4" : "image/jpeg"),
             origin: "shared"
           }
         : null
@@ -1178,7 +1239,7 @@ export default function App() {
   async function saveCapture() {
     if (!session) return;
     if (!draft.sourceUrl.trim() && !draft.sourceText.trim() && !draft.asset) {
-      Alert.alert("Nothing to save", "Add a link, text, image, or video first.");
+      Alert.alert("Nothing to save", "Add a link, text, image, video, or audio first.");
       return;
     }
     setSaving(true);
@@ -1241,6 +1302,78 @@ export default function App() {
       Alert.alert("Could not update intent", error instanceof Error ? error.message : "Unknown error");
     } finally {
       setIntentUpdatingId(null);
+    }
+  }
+
+  async function createReminderFromSuggestion(suggestionId: string) {
+    if (!session || !selected) return;
+    setReminderUpdatingId(suggestionId);
+    try {
+      await apiFetch("/api/reminders", session, {
+        method: "POST",
+        body: JSON.stringify({ captureId: selected.id, suggestionId })
+      });
+      setQuickEditStatus("Reminder scheduled.");
+      await loadReminders(session);
+      await loadCaptureDetail(selected.id, session);
+    } catch (error) {
+      Alert.alert("Could not create reminder", error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setReminderUpdatingId(null);
+    }
+  }
+
+  async function updateReminderStatus(reminderId: string, status: string) {
+    if (!session) return;
+    setReminderUpdatingId(reminderId);
+    try {
+      await apiFetch("/api/reminders", session, {
+        method: "PATCH",
+        body: JSON.stringify({ reminderId, status })
+      });
+      setQuickEditStatus(`Reminder ${status}.`);
+      await loadReminders(session);
+    } catch (error) {
+      Alert.alert("Could not update reminder", error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setReminderUpdatingId(null);
+    }
+  }
+
+  async function applyQuickEdit() {
+    if (!session || !selected || !quickEditText.trim()) return;
+    const parsed = parseQuickEdit(quickEditText);
+    setQuickEditStatus("Applying quick edit...");
+
+    try {
+      if (parsed.intent) {
+        await updateIntent(parsed.intent);
+      }
+
+      if (parsed.reminder) {
+        await apiFetch("/api/reminders", session, {
+          method: "POST",
+          body: JSON.stringify({ captureId: selected.id, quickText: quickEditText })
+        });
+        await loadReminders(session);
+      }
+
+      if (parsed.collectionName) {
+        await apiFetch("/api/collections", session, {
+          method: "POST",
+          body: JSON.stringify({ captureId: selected.id, name: parsed.collectionName })
+        });
+        await loadCaptureDetail(selected.id, session);
+      }
+
+      setQuickEditText("");
+      setQuickEditStatus(
+        parsed.intent || parsed.reminder || parsed.collectionName
+          ? "Quick edit applied."
+          : "No shortcut recognized yet."
+      );
+    } catch (error) {
+      Alert.alert("Could not apply quick edit", error instanceof Error ? error.message : "Unknown error");
     }
   }
 
@@ -1581,6 +1714,32 @@ export default function App() {
           </Text>
         </View>
         <View style={styles.panel}>
+          <Text style={styles.subhead}>Quick edit</Text>
+          <View style={styles.inlineFieldRow}>
+            <CaptureTextInput
+              onChangeText={setQuickEditText}
+              onSubmitEditing={applyQuickEdit}
+              placeholder="2d, @12:30pm, buy, #SF trip"
+              returnKeyType="done"
+              value={quickEditText}
+              style={[styles.input, styles.inlineFieldInput]}
+            />
+            <Pressable onPress={applyQuickEdit} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>Apply</Text>
+            </Pressable>
+          </View>
+          <View style={styles.wrapRow}>
+            {["2d", "tom @9am", "buy", "try place", "review"].map((hint) => (
+              <PillButton
+                key={hint}
+                label={hint}
+                onPress={() => setQuickEditText(hint)}
+              />
+            ))}
+          </View>
+          {quickEditStatus ? <Text style={styles.meta}>{quickEditStatus}</Text> : null}
+        </View>
+        <View style={styles.panel}>
           <Text style={styles.subhead}>Intent correction</Text>
           <Text style={styles.bodyText}>Change the capture intent here. Add evals separately when you want this correction to teach the prompt.</Text>
           <View style={styles.wrapRow}>
@@ -1618,13 +1777,50 @@ export default function App() {
           ) : null}
         </View>
         <View style={styles.panel}>
-          <Text style={styles.subhead}>Reminders</Text>
+          <Text style={styles.subhead}>Confirmed reminders</Text>
+          {selectedReminders.length ? (
+            selectedReminders.map((reminder) => (
+              <View style={styles.plainBlock} key={reminder.id}>
+                <Text style={styles.blockTitle}>{friendlyDate(reminder.due_at)}</Text>
+                <Text style={styles.meta}>{reminder.status}</Text>
+                <Text style={styles.bodyText}>{reminder.rationale}</Text>
+                <View style={styles.wrapRow}>
+                  <Pressable
+                    disabled={reminderUpdatingId === reminder.id}
+                    onPress={() => updateReminderStatus(reminder.id, "completed")}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>Complete</Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={reminderUpdatingId === reminder.id}
+                    onPress={() => updateReminderStatus(reminder.id, "dismissed")}
+                    style={styles.textButton}
+                  >
+                    <Text style={styles.textButtonLabel}>Dismiss</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.empty}>No confirmed reminders yet.</Text>
+          )}
+        </View>
+        <View style={styles.panel}>
+          <Text style={styles.subhead}>Reminder suggestions</Text>
           {capture.reminder_suggestions?.length ? (
             capture.reminder_suggestions.map((reminder) => (
               <View style={styles.plainBlock} key={reminder.id}>
                 <Text style={styles.blockTitle}>{reminder.trigger_value}</Text>
                 <Text style={styles.meta}>{reminder.trigger_type}</Text>
                 <Text style={styles.bodyText}>{reminder.rationale}</Text>
+                <Pressable
+                  disabled={reminderUpdatingId === reminder.id}
+                  onPress={() => createReminderFromSuggestion(reminder.id)}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryButtonText}>Schedule</Text>
+                </Pressable>
               </View>
             ))
           ) : (
@@ -1966,10 +2162,12 @@ export default function App() {
           <Text style={styles.subhead}>Source preview</Text>
           {selectedMedia?.kind === "image" ? (
             <Image source={{ uri: selectedMedia.url }} style={styles.preview} resizeMode="cover" />
-          ) : selectedMedia?.kind === "video" ? (
+          ) : selectedMedia?.kind === "video" || selectedMedia?.kind === "audio" ? (
             <View style={styles.videoPreview}>
               <Pressable onPress={() => openExternalUrl(selectedMedia.url)} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>Open video</Text>
+                <Text style={styles.secondaryButtonText}>
+                  Open {selectedMedia.kind === "audio" ? "audio" : "video"}
+                </Text>
               </Pressable>
             </View>
           ) : (
@@ -2326,6 +2524,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14
   },
   flexInput: {
+    flex: 1
+  },
+  inlineFieldRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10
+  },
+  inlineFieldInput: {
     flex: 1
   },
   textArea: {

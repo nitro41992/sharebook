@@ -70,7 +70,10 @@ export async function getCurrentUser(request?: Request) {
     const {
       data: { user },
       error
-    } = await supabase.auth.getUser(token);
+    } = await supabase.auth.getUser(token).catch(() => ({
+      data: { user: null },
+      error: new Error("Invalid bearer token")
+    }));
 
     if (!error && user) return user;
   }
@@ -79,7 +82,10 @@ export async function getCurrentUser(request?: Request) {
   const {
     data: { user },
     error
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser().catch(() => ({
+    data: { user: null },
+    error: new Error("Invalid session")
+  }));
 
   if (error || !user) {
     return null;

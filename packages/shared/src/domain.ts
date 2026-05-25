@@ -20,6 +20,7 @@ export const captureTypes = [
   "screenshot",
   "image",
   "video",
+  "voice_note",
   "text_note",
   "mixed",
   "unknown"

@@ -14,6 +14,7 @@ Calm, precise, low-friction, practical. Sharebook should feel like a trusted mem
 Design Principles:
 - Capture first, analysis second, review when useful.
 - The phone UI should support quick saving and clear reminder judgment.
+- Editing after extraction should feel snappy through pills, shorthand, and quick shortcuts rather than gamification mechanics.
 - Dense information is acceptable when reviewing, but capture must stay almost weightless.
 - Use prior context carefully. Never make the interface imply Sharebook knows more than it does.
 

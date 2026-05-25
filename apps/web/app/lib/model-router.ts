@@ -11,6 +11,7 @@ import {
   normalizeAnalysisForTrust
 } from "@sharebook/shared";
 import { optionalEnv } from "./env";
+import { createSupabaseAdminClient } from "./supabase-server";
 import type { UrlMetadata } from "./url-metadata";
 
 export type AnalyzeCaptureInput = {
@@ -44,6 +45,15 @@ export type AnalysisDebugArtifacts = {
   repairedOutput: unknown | null;
   schemaErrors: Array<{ path: string; message: string }>;
   inputSnapshot: Record<string, unknown>;
+};
+
+type ModelRouteConfig = {
+  route: string;
+  provider: "google" | "openai";
+  model: string;
+  promptVersion: string;
+  schemaVersion: string;
+  fallbackRoute: string | null;
 };
 
 export class CaptureAnalysisModelError extends Error {
@@ -87,38 +97,88 @@ function getRoute(route?: string | null) {
   return route || optionalEnv("DEFAULT_ANALYSIS_ROUTE") || "openai_mini";
 }
 
-function getModel(route: string) {
+function staticRouteConfig(route: string): ModelRouteConfig {
   switch (route) {
     case "gemini_flash":
       return {
+        route,
         provider: "google",
         model: "gemini-2.5-flash",
-        sdkModel: google("gemini-2.5-flash"),
-        objectMode: "auto" as const
+        promptVersion: ANALYSIS_PROMPT_VERSION,
+        schemaVersion: ANALYSIS_SCHEMA_VERSION,
+        fallbackRoute: "openai_mini"
       };
     case "gemini_flash_lite":
       return {
+        route,
         provider: "google",
         model: "gemini-2.5-flash-lite",
-        sdkModel: google("gemini-2.5-flash-lite"),
-        objectMode: "auto" as const
+        promptVersion: ANALYSIS_PROMPT_VERSION,
+        schemaVersion: ANALYSIS_SCHEMA_VERSION,
+        fallbackRoute: "openai_mini"
       };
     case "openai_mini":
       return {
+        route,
         provider: "openai",
         model: "gpt-4.1-mini",
-        sdkModel: openai("gpt-4.1-mini", { structuredOutputs: true }),
-        objectMode: "json" as const
+        promptVersion: ANALYSIS_PROMPT_VERSION,
+        schemaVersion: ANALYSIS_SCHEMA_VERSION,
+        fallbackRoute: "high_precision_openai"
       };
     case "high_precision_openai":
     default:
       return {
+        route: "high_precision_openai",
         provider: "openai",
         model: "gpt-4.1",
-        sdkModel: openai("gpt-4.1", { structuredOutputs: true }),
-        objectMode: "json" as const
+        promptVersion: ANALYSIS_PROMPT_VERSION,
+        schemaVersion: ANALYSIS_SCHEMA_VERSION,
+        fallbackRoute: null
       };
   }
+}
+
+async function getRouteConfig(route?: string | null): Promise<ModelRouteConfig> {
+  const requestedRoute = getRoute(route);
+  try {
+    const supabase = createSupabaseAdminClient();
+    const { data, error } = await supabase
+      .from("model_route_configs")
+      .select("route, provider, model, prompt_version, schema_version, fallback_route")
+      .eq("route", requestedRoute)
+      .eq("enabled", true)
+      .maybeSingle();
+
+    if (!error && data) {
+      return {
+        route: String(data.route),
+        provider: data.provider === "google" ? "google" : "openai",
+        model: String(data.model),
+        promptVersion: String(data.prompt_version || ANALYSIS_PROMPT_VERSION),
+        schemaVersion: String(data.schema_version || ANALYSIS_SCHEMA_VERSION),
+        fallbackRoute: typeof data.fallback_route === "string" ? data.fallback_route : null
+      };
+    }
+  } catch {
+    // Local dogfood databases may not have route config yet.
+  }
+
+  return staticRouteConfig(requestedRoute);
+}
+
+function sdkForConfig(config: ModelRouteConfig) {
+  if (config.provider === "google") {
+    return {
+      sdkModel: google(config.model),
+      objectMode: "auto" as const
+    };
+  }
+
+  return {
+    sdkModel: openai(config.model, { structuredOutputs: true }),
+    objectMode: "json" as const
+  };
 }
 
 function stringifyDebugValue(value: unknown) {
@@ -128,8 +188,8 @@ function stringifyDebugValue(value: unknown) {
 }
 
 export async function analyzeCapture(input: AnalyzeCaptureInput): Promise<AnalyzeCaptureResult> {
-  const route = getRoute(input.route);
-  const { provider, model, sdkModel, objectMode } = getModel(route);
+  const config = await getRouteConfig(input.route);
+  const { sdkModel, objectMode } = sdkForConfig(config);
   const started = Date.now();
   const inputSnapshot = {
     capture_id: input.captureId,
@@ -184,11 +244,11 @@ export async function analyzeCapture(input: AnalyzeCaptureInput): Promise<Analyz
     const analysis = result.object;
     return {
       analysis: normalizeAnalysisForTrust(analysis),
-      route,
-      provider,
-      model,
-      promptVersion: ANALYSIS_PROMPT_VERSION,
-      schemaVersion: ANALYSIS_SCHEMA_VERSION,
+      route: config.route,
+      provider: config.provider,
+      model: config.model,
+      promptVersion: config.promptVersion,
+      schemaVersion: config.schemaVersion,
       latencyMs: Date.now() - started,
       usage: result.usage ? { ...result.usage } : {},
       costEstimate: null,
@@ -206,11 +266,11 @@ export async function analyzeCapture(input: AnalyzeCaptureInput): Promise<Analyz
       error instanceof Error ? error.message : "Structured capture analysis failed";
     throw new CaptureAnalysisModelError({
       message,
-      route,
-      provider,
-      model,
-      promptVersion: ANALYSIS_PROMPT_VERSION,
-      schemaVersion: ANALYSIS_SCHEMA_VERSION,
+      route: config.route,
+      provider: config.provider,
+      model: config.model,
+      promptVersion: config.promptVersion,
+      schemaVersion: config.schemaVersion,
       latencyMs: Date.now() - started,
       usage: isNoObject && error.usage ? { ...error.usage } : {},
       debug: {

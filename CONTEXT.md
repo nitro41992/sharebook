@@ -76,6 +76,10 @@ _Avoid_: Intent chip, category chip
 Optional free text added by the user when One-Tap Correction is not expressive enough.
 _Avoid_: Required rationale, mandatory note
 
+**Quick Edit**:
+A compact post-capture amendment using pills, shorthand, or short text to adjust Save Intent, create a Reminder, or attach a Capture to a Collection without opening a full form.
+_Avoid_: Gamification, tagging workflow, command language
+
 **Visual Understanding**:
 Interpretation of screenshot or image content as people, places, things, scenes, UI state, and implied meaning.
 _Avoid_: OCR, image text extraction
@@ -91,6 +95,10 @@ _Avoid_: Folder, plan
 **Reminder**:
 A first-class prompt to resurface one or more Captures at a specific time, relative time, location, event, or other future context.
 _Avoid_: Notification setting, capture property
+
+**Confirmed Reminder**:
+A Reminder that the user explicitly created or accepted from a suggestion and that may produce a notification.
+_Avoid_: AI nudge, automatic notification
 
 **Reminder Rationale**:
 The short reason shown with a Reminder that explains why the Capture is being resurfaced, derived from Save Intent, Capture Context, or Context Note.

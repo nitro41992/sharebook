@@ -366,6 +366,10 @@ a {
   background: var(--surface);
 }
 
+.audio-preview {
+  height: 44px;
+}
+
 .debug-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -424,6 +428,46 @@ a {
 .search-box {
   display: flex;
   gap: 8px;
+}
+
+.view-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 14px;
+}
+
+.view-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.view-button.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.quick-edit-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.quick-edit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.quick-hints {
+  gap: 7px;
 }
 
 .search-box input {

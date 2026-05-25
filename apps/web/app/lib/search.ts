@@ -1,3 +1,5 @@
+import { intentLabels, parseQuickEdit } from "@sharebook/shared";
+
 type SupabaseAdminClient = ReturnType<
   typeof import("./supabase-server").createSupabaseAdminClient
 >;
@@ -93,18 +95,33 @@ function fieldMatchScore(query: string, terms: string[], value: string) {
   return 0;
 }
 
+function expandedQueryTerms(query: string) {
+  const parsed = parseQuickEdit(query);
+  return {
+    parsedIntent: parsed.intent ?? null,
+    terms: queryTerms(query)
+  };
+}
+
 function matchCapture(
   capture: SearchableCapture,
   query: string,
   documents: RelatedSearchDocument[] = []
 ) {
-  const terms = queryTerms(query);
+  const { parsedIntent, terms } = expandedQueryTerms(query);
   const fields: Array<{ label: string; value: string; weight: number }> = [
     { label: "title", value: asText(capture.display_title || capture.title), weight: 8 },
     { label: "source URL", value: asText(capture.source_url), weight: 7 },
     { label: "source text", value: asText(capture.source_text), weight: 6 },
     { label: "source app", value: asText(capture.source_app), weight: 4 },
     { label: "Save Intent", value: asText(capture.current_save_intent || capture.default_intent), weight: 5 },
+    {
+      label: "Save Intent label",
+      value: parsedIntent
+        ? intentLabels[parsedIntent]
+        : asText(capture.current_save_intent || capture.default_intent).replace(/_/g, " "),
+      weight: 5
+    },
     { label: "intent rationale", value: asText(capture.intent_rationale), weight: 4 },
     { label: "Context Note", value: asText(capture.context_note), weight: 5 },
     ...((capture.captured_entities ?? []).flatMap((entity) => [
@@ -128,6 +145,16 @@ function matchCapture(
   ];
 
   let best: { label: string; value: string; score: number } | null = null;
+  if (
+    parsedIntent &&
+    (capture.current_save_intent === parsedIntent || capture.default_intent === parsedIntent)
+  ) {
+    best = {
+      label: "Save Intent",
+      value: intentLabels[parsedIntent],
+      score: 36
+    };
+  }
   for (const field of fields) {
     const score = fieldMatchScore(query, terms, field.value);
     if (score > 0 && (!best || score * field.weight > best.score)) {

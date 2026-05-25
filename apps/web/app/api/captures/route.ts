@@ -8,6 +8,7 @@ import {
 import { createSupabaseAdminClient, getCurrentUser } from "../../lib/supabase-server";
 
 const directVideoUrlPattern = /\.(mp4|m4v|mov|webm|ogv|ogg)(?:[?#].*)?$/i;
+const directAudioUrlPattern = /\.(aac|aif|aiff|flac|m4a|mp3|oga|opus|wav)(?:[?#].*)?$/i;
 
 function isHttpUrl(value?: string | null) {
   if (!value) return false;
@@ -26,9 +27,13 @@ function inferCaptureType(input: {
 }) {
   if (input.mimeType?.startsWith("image/")) return "image";
   if (input.mimeType?.startsWith("video/")) return "video";
+  if (input.mimeType?.startsWith("audio/")) return "voice_note";
   if (input.sourceUrl) {
     if (isHttpUrl(input.sourceUrl) && directVideoUrlPattern.test(input.sourceUrl)) {
       return "video";
+    }
+    if (isHttpUrl(input.sourceUrl) && directAudioUrlPattern.test(input.sourceUrl)) {
+      return "voice_note";
     }
     if (
       /instagram\.com|tiktok\.com|reddit\.com|youtube\.com|youtu\.be|x\.com|twitter\.com/i.test(
@@ -135,7 +140,7 @@ export async function POST(request: Request) {
 
   if (!sourceUrl && !sourceText && !asset) {
     return NextResponse.json(
-      { error: "Add a URL, text, image, or video asset." },
+      { error: "Add a URL, text, image, video, or audio asset." },
       { status: 400 }
     );
   }

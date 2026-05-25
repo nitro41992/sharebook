@@ -5,6 +5,8 @@ import Image from "next/image";
 import {
   AlertTriangle,
   Brain,
+  Bell,
+  CalendarDays,
   CheckCircle2,
   ClipboardCheck,
   Download,
@@ -12,11 +14,17 @@ import {
   Trash2,
   Eye,
   Loader2,
+  MapPin,
   RefreshCw,
   Search
 } from "lucide-react";
 import { createBrowserClient } from "@supabase/ssr";
-import { intentCategories, intentLabels, type IntentCategory } from "@sharebook/shared";
+import {
+  intentCategories,
+  intentLabels,
+  parseQuickEdit,
+  type IntentCategory
+} from "@sharebook/shared";
 
 type AnalysisRun = {
   id: string;
@@ -103,6 +111,27 @@ type SearchResult = {
   score: number;
 };
 
+type Reminder = {
+  id: string;
+  trigger_type: string;
+  trigger_value: string;
+  due_at: string | null;
+  status: string;
+  rationale: string;
+  created_from: string;
+  reminder_captures?: Array<{
+    capture_id: string;
+    captures?: {
+      id: string;
+      display_title: string | null;
+      title: string | null;
+      capture_type: string | null;
+      source_app: string | null;
+      source_url: string | null;
+    } | null;
+  }>;
+};
+
 type EvalRun = {
   id: string;
   model_route: string;
@@ -138,6 +167,7 @@ type EvalFixture = {
 };
 
 type InspectorTab = "review" | "quality" | "source";
+type WorkspaceView = "inbox" | "agenda" | "map" | "calendar";
 
 type IntentUndo = {
   captureId: string;
@@ -181,7 +211,7 @@ type QualityReport = {
 };
 
 type CaptureAsset = NonNullable<Capture["capture_assets"]>[number];
-type MediaKind = "image" | "video";
+type MediaKind = "image" | "video" | "audio";
 type SourceMedia = {
   kind: MediaKind;
   url: string;
@@ -190,6 +220,7 @@ type SourceMedia = {
 
 const directImageUrlPattern = /\.(avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i;
 const directVideoUrlPattern = /\.(mp4|m4v|mov|webm|ogv|ogg)(?:[?#].*)?$/i;
+const directAudioUrlPattern = /\.(aac|aif|aiff|flac|m4a|mp3|oga|opus|wav)(?:[?#].*)?$/i;
 
 function safeHttpUrl(value?: string | null) {
   if (!value) return null;
@@ -205,12 +236,14 @@ function safeHttpUrl(value?: string | null) {
 function mediaKindFromMime(mimeType?: string | null): MediaKind | null {
   if (mimeType?.startsWith("image/")) return "image";
   if (mimeType?.startsWith("video/")) return "video";
+  if (mimeType?.startsWith("audio/")) return "audio";
   return null;
 }
 
 function mediaKindFromUrl(url: string): MediaKind | null {
   if (directImageUrlPattern.test(url)) return "image";
   if (directVideoUrlPattern.test(url)) return "video";
+  if (directAudioUrlPattern.test(url)) return "audio";
   return null;
 }
 
@@ -254,6 +287,9 @@ function JsonBlock({ value }: { value: unknown }) {
 
 function SourcePreview({ media }: { media: SourceMedia | null }) {
   if (!media) return <p className="muted small">No source preview for this capture.</p>;
+  if (media.kind === "audio") {
+    return <audio aria-label={media.label} className="preview audio-preview" controls src={media.url} />;
+  }
   if (media.kind === "video") {
     return (
       <video
@@ -286,6 +322,18 @@ function linesToList(value: string) {
 
 function listToLines(value?: string[]) {
   return (value ?? []).join("\n");
+}
+
+function friendlyDate(value?: string | null) {
+  if (!value) return "No time set";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function reminderBlankReason(capture: Capture, run?: AnalysisRun) {
@@ -343,7 +391,12 @@ export function CaptureWorkspace({
   const [savingPassword, setSavingPassword] = useState(false);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("inbox");
   const [tab, setTab] = useState<InspectorTab>("review");
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [quickEditText, setQuickEditText] = useState("");
+  const [quickEditStatus, setQuickEditStatus] = useState("");
+  const [reminderUpdatingId, setReminderUpdatingId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [fixtureStatus, setFixtureStatus] = useState("");
   const [fixtures, setFixtures] = useState<EvalFixture[]>([]);
@@ -412,6 +465,28 @@ export function CaptureWorkspace({
         )
       : [];
   }, [selectedRun]);
+  const selectedReminders = useMemo(() => {
+    if (!selected) return [];
+    return reminders.filter((reminder) =>
+      reminder.reminder_captures?.some((link) => link.capture_id === selected.id)
+    );
+  }, [reminders, selected]);
+  const placeCaptures = useMemo(
+    () =>
+      captures.filter(
+        (capture) =>
+          capture.source_app === "Maps" ||
+          capture.captured_entities?.some((entity) => entity.entity_type === "place")
+      ),
+    [captures]
+  );
+  const datedCaptures = useMemo(
+    () =>
+      captures.filter((capture) =>
+        capture.captured_entities?.some((entity) => entity.entity_type === "date")
+      ),
+    [captures]
+  );
 
   const hasEntityIssue =
     feedbackDraft.issues.includes("missing_entity") || feedbackDraft.issues.includes("wrong_entity");
@@ -485,6 +560,16 @@ export function CaptureWorkspace({
     }
     setCaptures(json.captures ?? []);
     if (nextSelectedId) setSelectedId(nextSelectedId);
+  }
+
+  async function loadReminders() {
+    const response = await fetch("/api/reminders");
+    const json = await readJsonResponse(response);
+    if (!response.ok) {
+      setQuickEditStatus(json.error ?? "Could not load reminders");
+      return;
+    }
+    setReminders(json.reminders ?? []);
   }
 
   async function createCapture(formData: FormData) {
@@ -584,6 +669,90 @@ export function CaptureWorkspace({
     } finally {
       setIntentUpdatingId(null);
     }
+  }
+
+  async function createReminderFromSuggestion(suggestionId: string) {
+    if (!selected) return;
+    setReminderUpdatingId(suggestionId);
+    try {
+      const response = await fetch("/api/reminders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ captureId: selected.id, suggestionId })
+      });
+      const json = await readJsonResponse(response);
+      if (!response.ok) {
+        setQuickEditStatus(json.error ?? "Could not create reminder");
+        return;
+      }
+      setQuickEditStatus("Reminder scheduled.");
+      await loadReminders();
+      await refreshCaptures(selected.id);
+    } finally {
+      setReminderUpdatingId(null);
+    }
+  }
+
+  async function updateReminderStatus(reminderId: string, status: string) {
+    setReminderUpdatingId(reminderId);
+    const response = await fetch("/api/reminders", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reminderId, status })
+    });
+    const json = await readJsonResponse(response);
+    setReminderUpdatingId(null);
+    if (!response.ok) {
+      setQuickEditStatus(json.error ?? "Could not update reminder");
+      return;
+    }
+    setQuickEditStatus(`Reminder ${status}.`);
+    await loadReminders();
+  }
+
+  async function applyQuickEdit() {
+    if (!selected || !quickEditText.trim()) return;
+    const parsed = parseQuickEdit(quickEditText);
+    setQuickEditStatus("Applying quick edit...");
+
+    if (parsed.intent) {
+      await updateIntent(parsed.intent);
+    }
+
+    if (parsed.reminder) {
+      const response = await fetch("/api/reminders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ captureId: selected.id, quickText: quickEditText })
+      });
+      const json = await readJsonResponse(response);
+      if (!response.ok) {
+        setQuickEditStatus(json.error ?? "Could not create reminder");
+        return;
+      }
+      await loadReminders();
+    }
+
+    if (parsed.collectionName) {
+      const response = await fetch("/api/collections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ captureId: selected.id, name: parsed.collectionName })
+      });
+      const json = await readJsonResponse(response);
+      if (!response.ok) {
+        setQuickEditStatus(json.error ?? "Could not attach collection");
+        return;
+      }
+      await refreshCaptures(selected.id);
+    }
+
+    setQuickEditText("");
+    setQuickEditStatus(
+      parsed.intent || parsed.reminder || parsed.collectionName
+        ? "Quick edit applied."
+        : "No shortcut recognized yet."
+    );
   }
 
   async function undoIntent() {
@@ -750,6 +919,10 @@ export function CaptureWorkspace({
   }, [initialCaptures]);
 
   useEffect(() => {
+    loadReminders();
+  }, []);
+
+  useEffect(() => {
     if (!selected) return;
     setSelectedRunId(selected.analysis_runs?.[0]?.id ?? "");
     setInspectedRunId("");
@@ -811,7 +984,7 @@ export function CaptureWorkspace({
             <span>Sharebook</span>
           </div>
           <p className="muted small">
-            Phase 0A validates whether AI can preserve why a capture mattered.
+            Capture quickly. Find it by why it mattered.
           </p>
         </div>
         <div className="divider" />
@@ -857,7 +1030,7 @@ export function CaptureWorkspace({
             event.currentTarget.reset();
           }}
         >
-          <div className="h2">New capture</div>
+          <div className="h2">Fast capture</div>
           <label className="field">
             <span className="label">URL</span>
             <input className="input" name="sourceUrl" placeholder="https://..." />
@@ -871,11 +1044,11 @@ export function CaptureWorkspace({
             />
           </label>
           <label className="field">
-            <span className="label">Image, video, or screenshot</span>
-            <input className="input" name="asset" type="file" accept="image/*,video/*" />
+            <span className="label">Image, video, audio, or screenshot</span>
+            <input className="input" name="asset" type="file" accept="image/*,video/*,audio/*" />
           </label>
           <button className="button" disabled={creating}>
-            {creating ? "Saving..." : "Save and analyze"}
+            {creating ? "Saving..." : "Save now"}
           </button>
         </form>
       </aside>
@@ -884,6 +1057,24 @@ export function CaptureWorkspace({
         <div className="section">
           <div className="eyebrow">Review inbox</div>
           <h1 className="h1">What did you save, and why?</h1>
+          <div className="view-switcher">
+            {([
+              ["inbox", Search, "Inbox"],
+              ["agenda", Bell, "Agenda"],
+              ["map", MapPin, "Map"],
+              ["calendar", CalendarDays, "Calendar"]
+            ] as const).map(([view, Icon, label]) => (
+              <button
+                className={`view-button ${workspaceView === view ? "active" : ""}`}
+                key={view}
+                onClick={() => setWorkspaceView(view)}
+                type="button"
+              >
+                <Icon size={15} />
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="search-box">
             <input
               className="input"
@@ -977,7 +1168,98 @@ export function CaptureWorkspace({
           ) : null}
         </div>
         <div className="capture-list">
-          {captures.length ? (
+          {workspaceView === "agenda" ? (
+            reminders.length ? (
+              reminders.map((reminder) => {
+                const linked = reminder.reminder_captures?.[0]?.captures;
+                return (
+                  <div className="capture-row" key={reminder.id}>
+                    <div className="row-main">
+                      <p className="row-title">{friendlyDate(reminder.due_at)} · {reminder.trigger_value}</p>
+                      <p className="muted small">{reminder.rationale}</p>
+                      <div className="row-meta">
+                        <span className={`chip ${reminder.status === "scheduled" ? "ready" : ""}`}>
+                          {reminder.status}
+                        </span>
+                        {linked ? <span className="chip">{linked.display_title || linked.title}</span> : null}
+                      </div>
+                    </div>
+                    <div className="toolbar">
+                      {linked ? (
+                        <button className="button secondary row-action" onClick={() => setSelectedId(linked.id)}>
+                          Open
+                        </button>
+                      ) : null}
+                      <button
+                        className="button secondary row-action"
+                        disabled={reminderUpdatingId === reminder.id}
+                        onClick={() => updateReminderStatus(reminder.id, "completed")}
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="empty">No scheduled reminders yet.</div>
+            )
+          ) : workspaceView === "map" ? (
+            placeCaptures.length ? (
+              placeCaptures.map((capture) => (
+                <div
+                  key={capture.id}
+                  className={`capture-row ${selected?.id === capture.id ? "active" : ""}`}
+                  onClick={() => setSelectedId(capture.id)}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="row-main">
+                    <p className="row-title">{captureTitle(capture)}</p>
+                    <p className="muted small">
+                      {capture.captured_entities
+                        ?.filter((entity) => entity.entity_type === "place")
+                        .map((entity) => entity.display_name)
+                        .join(", ") || capture.source_url || "Place evidence captured"}
+                    </p>
+                  </div>
+                  <MapPin size={18} />
+                </div>
+              ))
+            ) : (
+              <div className="empty">No place captures yet. Maps links and place entities will appear here.</div>
+            )
+          ) : workspaceView === "calendar" ? (
+            reminders.length || datedCaptures.length ? (
+              <>
+                {reminders.map((reminder) => (
+                  <div className="capture-row" key={`calendar-${reminder.id}`}>
+                    <div className="row-main">
+                      <p className="row-title">{friendlyDate(reminder.due_at)}</p>
+                      <p className="muted small">{reminder.rationale}</p>
+                    </div>
+                    <span className="chip ready">reminder</span>
+                  </div>
+                ))}
+                {datedCaptures.map((capture) => (
+                  <div className="capture-row" key={`dated-${capture.id}`} onClick={() => setSelectedId(capture.id)}>
+                    <div className="row-main">
+                      <p className="row-title">{captureTitle(capture)}</p>
+                      <p className="muted small">
+                        {capture.captured_entities
+                          ?.filter((entity) => entity.entity_type === "date")
+                          .map((entity) => entity.display_name)
+                          .join(", ")}
+                      </p>
+                    </div>
+                    <span className="chip">dated capture</span>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div className="empty">Dates and reminders will appear here once captured or scheduled.</div>
+            )
+          ) : captures.length ? (
             captures.map((capture) => {
               const isAnalyzing = analyzingIds.has(capture.id);
               return (
@@ -1141,6 +1423,36 @@ export function CaptureWorkspace({
                       "Run analysis to infer save intent, captured entities, reminders, collections, and search phrases."}
                   </p>
                 </div>
+                <div className="panel quick-edit-panel">
+                  <div className="label">Quick edit</div>
+                  <div className="quick-edit-row">
+                    <input
+                      className="input"
+                      value={quickEditText}
+                      onChange={(event) => setQuickEditText(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") applyQuickEdit();
+                      }}
+                      placeholder="2d, 4h @12:30pm, buy, try place, #SF trip"
+                    />
+                    <button className="button secondary" onClick={applyQuickEdit}>
+                      Apply
+                    </button>
+                  </div>
+                  <div className="toolbar quick-hints">
+                    {["2d", "tom @9am", "buy", "try place", "review"].map((hint) => (
+                      <button
+                        className="chip chip-button"
+                        key={hint}
+                        onClick={() => setQuickEditText(hint)}
+                        type="button"
+                      >
+                        {hint}
+                      </button>
+                    ))}
+                  </div>
+                  {quickEditStatus ? <p className="muted small">{quickEditStatus}</p> : null}
+                </div>
                 <div className="panel">
                   <div className="label">Intent correction</div>
                   <div className="toolbar" style={{ marginTop: 10 }}>
@@ -1192,6 +1504,38 @@ export function CaptureWorkspace({
                   </div>
                 </div>
                 <div className="panel">
+                  <div className="label">Confirmed reminders</div>
+                  <div className="suggestion-list" style={{ marginTop: 10 }}>
+                    {selectedReminders.length ? (
+                      selectedReminders.map((reminder) => (
+                        <div className="suggestion-item" key={reminder.id}>
+                          <strong>{friendlyDate(reminder.due_at)}</strong>{" "}
+                          <span className="muted small">{reminder.status}</span>
+                          <p className="muted small">{reminder.rationale}</p>
+                          <div className="toolbar">
+                            <button
+                              className="button secondary"
+                              disabled={reminderUpdatingId === reminder.id}
+                              onClick={() => updateReminderStatus(reminder.id, "completed")}
+                            >
+                              Complete
+                            </button>
+                            <button
+                              className="button ghost"
+                              disabled={reminderUpdatingId === reminder.id}
+                              onClick={() => updateReminderStatus(reminder.id, "dismissed")}
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted small">No confirmed reminders for this capture yet.</p>
+                    )}
+                  </div>
+                </div>
+                <div className="panel">
                   <div className="label">Reminder suggestions</div>
                   <div className="suggestion-list" style={{ marginTop: 10 }}>
                     {selected.reminder_suggestions?.length ? (
@@ -1200,6 +1544,14 @@ export function CaptureWorkspace({
                           <strong>{reminder.trigger_value}</strong>{" "}
                           <span className="muted small">{reminder.trigger_type}</span>
                           <p className="muted small">{reminder.rationale}</p>
+                          <button
+                            className="button secondary"
+                            disabled={reminderUpdatingId === reminder.id}
+                            onClick={() => createReminderFromSuggestion(reminder.id)}
+                          >
+                            <Bell size={16} />
+                            Schedule
+                          </button>
                         </div>
                       ))
                     ) : (

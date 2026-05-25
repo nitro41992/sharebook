@@ -18,8 +18,8 @@
         {
           "android": {
             "enabled": true,
-            "singleShareMimeTypes": ["text/*", "image/*"],
-            "multipleShareMimeTypes": ["image/*"]
+            "singleShareMimeTypes": ["text/*", "image/*", "video/*", "audio/*"],
+            "multipleShareMimeTypes": ["image/*", "video/*", "audio/*"]
           }
         }
       ]

@@ -7,13 +7,29 @@ import {
 } from "../../lib/capture-loader";
 import { createSupabaseAdminClient, getCurrentUser } from "../../lib/supabase-server";
 
+const directVideoUrlPattern = /\.(mp4|m4v|mov|webm|ogv|ogg)(?:[?#].*)?$/i;
+
+function isHttpUrl(value?: string | null) {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function inferCaptureType(input: {
   sourceUrl?: string | null;
   sourceText?: string | null;
   mimeType?: string | null;
 }) {
   if (input.mimeType?.startsWith("image/")) return "image";
+  if (input.mimeType?.startsWith("video/")) return "video";
   if (input.sourceUrl) {
+    if (isHttpUrl(input.sourceUrl) && directVideoUrlPattern.test(input.sourceUrl)) {
+      return "video";
+    }
     if (
       /instagram\.com|tiktok\.com|reddit\.com|youtube\.com|youtu\.be|x\.com|twitter\.com/i.test(
         input.sourceUrl
@@ -80,13 +96,35 @@ export async function POST(request: Request) {
   const user = await getCurrentUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const formData = await request.formData();
-  const sourceUrl = formData.get("sourceUrl")?.toString().trim() || null;
-  const sourceText = formData.get("sourceText")?.toString().trim() || null;
-  const sourceApp = formData.get("sourceApp")?.toString().trim() || inferSourceApp(sourceUrl);
-  const title = formData.get("title")?.toString().trim() || null;
-  const file = formData.get("asset");
-  const asset = file instanceof File && file.size > 0 ? file : null;
+  const contentType = request.headers.get("content-type") ?? "";
+  let sourceUrl: string | null = null;
+  let sourceText: string | null = null;
+  let sourceApp: string | null = null;
+  let title: string | null = null;
+  let asset: File | null = null;
+
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await request.formData();
+    sourceUrl = formData.get("sourceUrl")?.toString().trim() || null;
+    sourceText = formData.get("sourceText")?.toString().trim() || null;
+    sourceApp = formData.get("sourceApp")?.toString().trim() || null;
+    title = formData.get("title")?.toString().trim() || null;
+    const file = formData.get("asset");
+    asset = file instanceof File && file.size > 0 ? file : null;
+  } else {
+    const body = (await request.json().catch(() => ({}))) as {
+      sourceUrl?: unknown;
+      sourceText?: unknown;
+      sourceApp?: unknown;
+      title?: unknown;
+    };
+    sourceUrl = typeof body.sourceUrl === "string" ? body.sourceUrl.trim() || null : null;
+    sourceText = typeof body.sourceText === "string" ? body.sourceText.trim() || null : null;
+    sourceApp = typeof body.sourceApp === "string" ? body.sourceApp.trim() || null : null;
+    title = typeof body.title === "string" ? body.title.trim() || null : null;
+  }
+
+  sourceApp ||= inferSourceApp(sourceUrl);
   const captureType = CaptureTypeSchema.parse(
     inferCaptureType({
       sourceUrl,
@@ -97,7 +135,7 @@ export async function POST(request: Request) {
 
   if (!sourceUrl && !sourceText && !asset) {
     return NextResponse.json(
-      { error: "Add a URL, text, or image/screenshot asset." },
+      { error: "Add a URL, text, image, or video asset." },
       { status: 400 }
     );
   }

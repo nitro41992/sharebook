@@ -19,6 +19,7 @@ export const captureTypes = [
   "social_post",
   "screenshot",
   "image",
+  "video",
   "text_note",
   "mixed",
   "unknown"

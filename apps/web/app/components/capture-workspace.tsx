@@ -180,6 +180,44 @@ type QualityReport = {
   }>;
 };
 
+type CaptureAsset = NonNullable<Capture["capture_assets"]>[number];
+type MediaKind = "image" | "video";
+type SourceMedia = {
+  kind: MediaKind;
+  url: string;
+  label: string;
+};
+
+const directImageUrlPattern = /\.(avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i;
+const directVideoUrlPattern = /\.(mp4|m4v|mov|webm|ogv|ogg)(?:[?#].*)?$/i;
+
+function safeHttpUrl(value?: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function mediaKindFromMime(mimeType?: string | null): MediaKind | null {
+  if (mimeType?.startsWith("image/")) return "image";
+  if (mimeType?.startsWith("video/")) return "video";
+  return null;
+}
+
+function mediaKindFromUrl(url: string): MediaKind | null {
+  if (directImageUrlPattern.test(url)) return "image";
+  if (directVideoUrlPattern.test(url)) return "video";
+  return null;
+}
+
+function assetUrl(asset: CaptureAsset) {
+  return safeHttpUrl(asset.signed_url || asset.public_url);
+}
+
 function stateClass(state: string) {
   if (state === "ready") return "ready";
   if (state === "failed") return "bad";
@@ -212,6 +250,31 @@ async function readJsonResponse(response: Response) {
 function JsonBlock({ value }: { value: unknown }) {
   if (value == null || value === "") return <p className="muted small">None recorded.</p>;
   return <pre className="code-block">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>;
+}
+
+function SourcePreview({ media }: { media: SourceMedia | null }) {
+  if (!media) return <p className="muted small">No source preview for this capture.</p>;
+  if (media.kind === "video") {
+    return (
+      <video
+        aria-label={media.label}
+        className="preview"
+        controls
+        preload="metadata"
+        src={media.url}
+      />
+    );
+  }
+  return (
+    <Image
+      alt={media.label}
+      className="preview"
+      height={900}
+      src={media.url}
+      unoptimized
+      width={900}
+    />
+  );
 }
 
 function linesToList(value: string) {
@@ -317,9 +380,26 @@ export function CaptureWorkspace({
   const selectedRun =
     selectedRuns.find((run) => run.id === selectedRunId) ?? selectedRuns[0];
   const inspectedRun = selectedRuns.find((run) => run.id === inspectedRunId);
-  const selectedPreview = selected?.capture_assets?.find((asset) =>
-    asset.mime_type?.startsWith("image/")
-  );
+  const selectedMedia = useMemo<SourceMedia | null>(() => {
+    const mediaAsset = selected?.capture_assets?.find(
+      (asset) => mediaKindFromMime(asset.mime_type) && assetUrl(asset)
+    );
+    if (mediaAsset) {
+      const kind = mediaKindFromMime(mediaAsset.mime_type);
+      const url = assetUrl(mediaAsset);
+      if (kind && url) return { kind, url, label: "Capture upload" };
+    }
+
+    const sourceUrl = safeHttpUrl(selected?.source_url);
+    const sourceKind = sourceUrl ? mediaKindFromUrl(sourceUrl) : null;
+    if (sourceUrl && sourceKind) {
+      return { kind: sourceKind, url: sourceUrl, label: "Capture source" };
+    }
+
+    const thumbnailUrl = safeHttpUrl(selected?.thumbnail_url);
+    return thumbnailUrl ? { kind: "image", url: thumbnailUrl, label: "Capture thumbnail" } : null;
+  }, [selected]);
+  const selectedSourceUrl = safeHttpUrl(selected?.source_url);
   const selectedActions = useMemo(() => {
     const output =
       selectedRun?.repaired_output && typeof selectedRun.repaired_output === "object"
@@ -791,8 +871,8 @@ export function CaptureWorkspace({
             />
           </label>
           <label className="field">
-            <span className="label">Image or screenshot</span>
-            <input className="input" name="asset" type="file" accept="image/*" />
+            <span className="label">Image, video, or screenshot</span>
+            <input className="input" name="asset" type="file" accept="image/*,video/*" />
           </label>
           <button className="button" disabled={creating}>
             {creating ? "Saving..." : "Save and analyze"}
@@ -1168,31 +1248,22 @@ export function CaptureWorkspace({
               <>
                 <div className="panel">
                   <div className="label">Source preview</div>
-                  {selectedPreview?.signed_url ? (
-                    <Image
-                      alt="Capture upload"
-                      className="preview"
-                      height={900}
-                      src={selectedPreview.signed_url}
-                      unoptimized
-                      width={900}
-                    />
-                  ) : selected.thumbnail_url ? (
-                    <Image
-                      alt="Capture thumbnail"
-                      className="preview"
-                      height={900}
-                      src={selected.thumbnail_url}
-                      unoptimized
-                      width={900}
-                    />
-                  ) : (
-                    <p className="muted small">No image preview for this capture.</p>
-                  )}
+                  <SourcePreview media={selectedMedia} />
                 </div>
                 <div className="panel">
                   <div className="label">Source URL</div>
-                  <p className="body">{selected.source_url || "None"}</p>
+                  {selectedSourceUrl ? (
+                    <a
+                      className="body source-link"
+                      href={selectedSourceUrl}
+                      rel="noreferrer noopener"
+                      target="_blank"
+                    >
+                      {selected.source_url}
+                    </a>
+                  ) : (
+                    <p className="body">{selected.source_url || "None"}</p>
+                  )}
                 </div>
                 <div className="panel">
                   <div className="label">Source text</div>

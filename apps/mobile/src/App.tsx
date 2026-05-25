@@ -5,7 +5,7 @@ import { createClient, processLock, type Session } from "@supabase/supabase-js";
 import * as ImagePicker from "expo-image-picker";
 import { clearSharedPayloads, useIncomingShare } from "expo-sharing";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -173,7 +173,15 @@ type CaptureDraft = {
     uri: string;
     name: string;
     type: string;
+    origin?: "picker" | "shared";
   } | null;
+};
+
+type CaptureAsset = NonNullable<Capture["capture_assets"]>[number];
+type MediaKind = "image" | "video";
+type SourceMedia = {
+  kind: MediaKind;
+  url: string;
 };
 
 const feedbackIssues = [
@@ -231,6 +239,36 @@ function confidenceText(value: number | null | undefined) {
 
 function extractUrl(value: string) {
   return value.match(/https?:\/\/\S+/i)?.[0] ?? "";
+}
+
+const directImageUrlPattern = /\.(avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i;
+const directVideoUrlPattern = /\.(mp4|m4v|mov|webm|ogv|ogg)(?:[?#].*)?$/i;
+
+function safeHttpUrl(value?: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function mediaKindFromMime(mimeType?: string | null): MediaKind | null {
+  if (mimeType?.startsWith("image/")) return "image";
+  if (mimeType?.startsWith("video/")) return "video";
+  return null;
+}
+
+function mediaKindFromUrl(url: string): MediaKind | null {
+  if (directImageUrlPattern.test(url)) return "image";
+  if (directVideoUrlPattern.test(url)) return "video";
+  return null;
+}
+
+function assetUrl(asset: CaptureAsset) {
+  return safeHttpUrl(asset.signed_url || asset.public_url);
 }
 
 function linesToList(value: string) {
@@ -381,6 +419,237 @@ function PillButton({
     >
       <Text style={[styles.choicePillText, active && styles.choicePillTextActive]}>{label}</Text>
     </Pressable>
+  );
+}
+
+type CaptureTextInputProps = Pick<
+  ComponentProps<typeof TextInput>,
+  | "autoComplete"
+  | "keyboardType"
+  | "multiline"
+  | "onChangeText"
+  | "onSubmitEditing"
+  | "placeholder"
+  | "returnKeyType"
+  | "secureTextEntry"
+  | "style"
+  | "value"
+> & {
+  autoCorrect?: boolean;
+};
+
+function CaptureTextInput({
+  autoComplete,
+  autoCorrect,
+  keyboardType,
+  multiline,
+  onChangeText,
+  onSubmitEditing,
+  placeholder,
+  returnKeyType,
+  secureTextEntry,
+  style,
+  value
+}: CaptureTextInputProps) {
+  return (
+    <TextInput
+      autoCapitalize="none"
+      autoComplete={autoComplete}
+      autoCorrect={autoCorrect}
+      keyboardType={keyboardType}
+      multiline={multiline}
+      onChangeText={onChangeText}
+      onSubmitEditing={onSubmitEditing}
+      placeholder={placeholder}
+      placeholderTextColor={colors.muted}
+      returnKeyType={returnKeyType}
+      secureTextEntry={secureTextEntry}
+      style={style ?? styles.input}
+      value={value}
+    />
+  );
+}
+
+function HomeHeader({
+  capturesCount,
+  confirmPassword,
+  draft,
+  newPassword,
+  onConfirmPasswordChange,
+  onLoadQualityReport,
+  onNewPasswordChange,
+  onOpenCapture,
+  onPickMedia,
+  onQueryChange,
+  onSaveCapture,
+  onSearch,
+  onSetAccountPassword,
+  onSourceTextChange,
+  onSourceUrlChange,
+  query,
+  saving,
+  savingPassword,
+  searchResults,
+  searching,
+  showAccount
+}: {
+  capturesCount: number;
+  confirmPassword: string;
+  draft: CaptureDraft;
+  newPassword: string;
+  onConfirmPasswordChange: (value: string) => void;
+  onLoadQualityReport: () => void;
+  onNewPasswordChange: (value: string) => void;
+  onOpenCapture: (captureId: string) => void;
+  onPickMedia: () => void;
+  onQueryChange: (value: string) => void;
+  onSaveCapture: () => void;
+  onSearch: () => void;
+  onSetAccountPassword: () => void;
+  onSourceTextChange: (value: string) => void;
+  onSourceUrlChange: (value: string) => void;
+  query: string;
+  saving: boolean;
+  savingPassword: boolean;
+  searchResults: SearchResult[];
+  searching: boolean;
+  showAccount: boolean;
+}) {
+  return (
+    <View style={styles.homeHeader}>
+      {showAccount ? (
+        <View style={styles.accountPanel}>
+          <Text style={styles.sectionTitle}>Set password</Text>
+          <Text style={styles.bodyText}>Add a password so magic links stay optional.</Text>
+          <CaptureTextInput
+            autoComplete="password-new"
+            onChangeText={onNewPasswordChange}
+            placeholder="New password"
+            secureTextEntry
+            style={styles.input}
+            value={newPassword}
+          />
+          <CaptureTextInput
+            autoComplete="password-new"
+            onChangeText={onConfirmPasswordChange}
+            placeholder="Confirm password"
+            secureTextEntry
+            style={styles.input}
+            value={confirmPassword}
+          />
+          <Pressable
+            disabled={savingPassword}
+            onPress={onSetAccountPassword}
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              pressed && styles.pressed,
+              savingPassword && styles.disabled
+            ]}
+          >
+            <Text style={styles.secondaryButtonText}>
+              {savingPassword ? "Saving..." : "Set password"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      <View style={styles.capturePanel}>
+        <Text style={styles.sectionTitle}>New capture</Text>
+        <CaptureTextInput
+          autoCorrect={false}
+          keyboardType="url"
+          onChangeText={onSourceUrlChange}
+          placeholder="Paste a link"
+          style={styles.input}
+          value={draft.sourceUrl}
+        />
+        <CaptureTextInput
+          multiline
+          onChangeText={onSourceTextChange}
+          placeholder="Optional caption, note, or context"
+          style={[styles.input, styles.textArea]}
+          value={draft.sourceText}
+        />
+        <View style={styles.row}>
+          <Pressable onPress={onPickMedia} style={styles.secondaryButton}>
+            <Text style={styles.secondaryButtonText}>
+              {draft.asset ? "Change media" : "Add media"}
+            </Text>
+          </Pressable>
+          <Pressable
+            disabled={saving}
+            onPress={onSaveCapture}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              pressed && styles.pressed,
+              saving && styles.disabled
+            ]}
+          >
+            <Text style={styles.primaryButtonText}>{saving ? "Saving..." : "Save and analyze"}</Text>
+          </Pressable>
+        </View>
+        {draft.asset ? <Text style={styles.meta}>Attached: {draft.asset.name}</Text> : null}
+      </View>
+
+      <View style={styles.searchPanel}>
+        <Text style={styles.sectionTitle}>Search</Text>
+        <View style={styles.row}>
+          <CaptureTextInput
+            onChangeText={onQueryChange}
+            onSubmitEditing={onSearch}
+            placeholder="Search memory, entities, notes, or intent"
+            returnKeyType="search"
+            style={[styles.input, styles.flexInput]}
+            value={query}
+          />
+          <Pressable
+            disabled={searching}
+            onPress={onSearch}
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              styles.smallButton,
+              pressed && styles.pressed,
+              searching && styles.disabled
+            ]}
+          >
+            <Text style={styles.secondaryButtonText}>{searching ? "..." : "Go"}</Text>
+          </Pressable>
+        </View>
+        {searchResults.length ? (
+          <View style={styles.searchResults}>
+            {searchResults.slice(0, 5).map((result) => {
+              const resultCapture = result.capture ?? result.captures;
+              return (
+                <Pressable
+                  key={`${result.capture_id}-${result.id}`}
+                  onPress={() => onOpenCapture(result.capture_id)}
+                  style={({ pressed }) => [styles.searchResult, pressed && styles.pressed]}
+                >
+                  <Text numberOfLines={1} style={styles.searchTitle}>
+                    {resultCapture ? captureTitle(resultCapture) : result.capture_id.slice(0, 8)}
+                  </Text>
+                  <Text numberOfLines={2} style={styles.meta}>
+                    {result.match_context}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : query.trim() ? (
+          <Text style={styles.empty}>No visible search matches yet.</Text>
+        ) : null}
+      </View>
+
+      <View style={styles.listHeader}>
+        <View>
+          <Text style={styles.sectionTitle}>Recent captures</Text>
+          <Text style={styles.meta}>{capturesCount} loaded</Text>
+        </View>
+        <Pressable onPress={onLoadQualityReport} style={styles.textButton}>
+          <Text style={styles.textButtonLabel}>Quality report</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -552,9 +821,23 @@ export default function App() {
   }, [captureDetails, captures, selectedId]);
 
   const selectedRun = selected?.analysis_runs?.[0] ?? null;
-  const selectedPreview = selected?.capture_assets?.find((asset) =>
-    asset.mime_type?.startsWith("image/")
-  );
+  const selectedMedia = useMemo<SourceMedia | null>(() => {
+    const mediaAsset = selected?.capture_assets?.find(
+      (asset) => mediaKindFromMime(asset.mime_type) && assetUrl(asset)
+    );
+    if (mediaAsset) {
+      const kind = mediaKindFromMime(mediaAsset.mime_type);
+      const url = assetUrl(mediaAsset);
+      if (kind && url) return { kind, url };
+    }
+
+    const sourceUrl = safeHttpUrl(selected?.source_url);
+    const sourceKind = sourceUrl ? mediaKindFromUrl(sourceUrl) : null;
+    if (sourceUrl && sourceKind) return { kind: sourceKind, url: sourceUrl };
+
+    const thumbnailUrl = safeHttpUrl(selected?.thumbnail_url);
+    return thumbnailUrl ? { kind: "image", url: thumbnailUrl } : null;
+  }, [selected]);
   const selectedActions = useMemo(() => {
     const fromCapture = selected?.suggested_actions ?? [];
     if (fromCapture.length) return fromCapture;
@@ -769,15 +1052,20 @@ export default function App() {
     const rawValue = raw?.value ?? "";
     const sharedUrl = shared?.contentType === "website" ? shared.contentUri ?? "" : "";
     const sourceUrl = sharedUrl || extractUrl(rawValue);
-    const isImage = shared?.contentType === "image" && shared.contentUri;
+    const contentMimeType = shared?.contentMimeType ?? "";
+    const isImage =
+      (shared?.contentType === "image" || contentMimeType.startsWith("image/")) && shared?.contentUri;
+    const isVideo =
+      (shared?.contentType === "video" || contentMimeType.startsWith("video/")) && shared?.contentUri;
     setDraft({
       sourceUrl,
       sourceText: sourceUrl ? rawValue.replace(sourceUrl, "").trim() : rawValue,
-      asset: isImage
+      asset: isImage || isVideo
         ? {
             uri: shared.contentUri!,
-            name: shared.originalName ?? "shared-image.jpg",
-            type: shared.contentMimeType ?? "image/jpeg"
+            name: shared.originalName ?? (isVideo ? "shared-video.mp4" : "shared-image.jpg"),
+            type: contentMimeType || (isVideo ? "video/mp4" : "image/jpeg"),
+            origin: "shared"
           }
         : null
     });
@@ -868,19 +1156,21 @@ export default function App() {
     }
   }
 
-  async function pickImage() {
+  async function pickMedia() {
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
+      mediaTypes: ["images", "videos"],
       quality: 0.9
     });
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
+    const type = asset.mimeType ?? (asset.type === "video" ? "video/mp4" : "image/jpeg");
     setDraft((current) => ({
       ...current,
       asset: {
         uri: asset.uri,
-        name: asset.fileName ?? "capture.jpg",
-        type: asset.mimeType ?? "image/jpeg"
+        name: asset.fileName ?? (type.startsWith("video/") ? "capture.mp4" : "capture.jpg"),
+        type,
+        origin: "picker"
       }
     }));
   }
@@ -888,25 +1178,35 @@ export default function App() {
   async function saveCapture() {
     if (!session) return;
     if (!draft.sourceUrl.trim() && !draft.sourceText.trim() && !draft.asset) {
-      Alert.alert("Nothing to save", "Add a link, text, or image first.");
+      Alert.alert("Nothing to save", "Add a link, text, image, or video first.");
       return;
     }
     setSaving(true);
-    const form = new FormData();
-    if (draft.sourceUrl.trim()) form.append("sourceUrl", draft.sourceUrl.trim());
-    if (draft.sourceText.trim()) form.append("sourceText", draft.sourceText.trim());
-    if (draft.asset) {
+    const sourceUrl = draft.sourceUrl.trim();
+    const sourceText = draft.sourceText.trim();
+    const shouldUploadAsset = Boolean(draft.asset && (!sourceUrl || draft.asset.origin === "picker"));
+    let body: BodyInit;
+    if (shouldUploadAsset && draft.asset) {
+      const form = new FormData();
+      if (sourceUrl) form.append("sourceUrl", sourceUrl);
+      if (sourceText) form.append("sourceText", sourceText);
       form.append("asset", {
         uri: draft.asset.uri,
         name: draft.asset.name,
         type: draft.asset.type
       } as unknown as Blob);
+      body = form;
+    } else {
+      body = JSON.stringify({
+        sourceUrl: sourceUrl || null,
+        sourceText: sourceText || null
+      });
     }
 
     try {
       const json = await apiFetch("/api/captures", session, {
         method: "POST",
-        body: form
+        body
       });
       const capture = json.capture as Capture;
       setDraft({ sourceUrl: "", sourceText: "", asset: null });
@@ -1156,150 +1456,13 @@ export default function App() {
     Alert.alert("Password saved", "You can now sign in with email and password.");
   }
 
-  function HomeHeader() {
-    return (
-      <View style={styles.homeHeader}>
-        {showAccount ? (
-          <View style={styles.accountPanel}>
-            <Text style={styles.sectionTitle}>Set password</Text>
-            <Text style={styles.bodyText}>Add a password so magic links stay optional.</Text>
-            <TextInput
-              autoCapitalize="none"
-              autoComplete="password-new"
-              onChangeText={setNewPassword}
-              placeholder="New password"
-              placeholderTextColor={colors.muted}
-              secureTextEntry
-              style={styles.input}
-              value={newPassword}
-            />
-            <TextInput
-              autoCapitalize="none"
-              autoComplete="password-new"
-              onChangeText={setConfirmPassword}
-              placeholder="Confirm password"
-              placeholderTextColor={colors.muted}
-              secureTextEntry
-              style={styles.input}
-              value={confirmPassword}
-            />
-            <Pressable
-              disabled={savingPassword}
-              onPress={setAccountPassword}
-              style={({ pressed }) => [
-                styles.secondaryButton,
-                pressed && styles.pressed,
-                savingPassword && styles.disabled
-              ]}
-            >
-              <Text style={styles.secondaryButtonText}>
-                {savingPassword ? "Saving..." : "Set password"}
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
+  const updateDraftSourceUrl = useCallback((sourceUrl: string) => {
+    setDraft((current) => ({ ...current, sourceUrl }));
+  }, []);
 
-        <View style={styles.capturePanel}>
-          <Text style={styles.sectionTitle}>New capture</Text>
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={(sourceUrl) => setDraft((current) => ({ ...current, sourceUrl }))}
-            placeholder="Paste a link"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-            value={draft.sourceUrl}
-          />
-          <TextInput
-            multiline
-            onChangeText={(sourceText) => setDraft((current) => ({ ...current, sourceText }))}
-            placeholder="Optional caption, note, or context"
-            placeholderTextColor={colors.muted}
-            style={[styles.input, styles.textArea]}
-            value={draft.sourceText}
-          />
-          <View style={styles.row}>
-            <Pressable onPress={pickImage} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>
-                {draft.asset ? "Change image" : "Add image"}
-              </Text>
-            </Pressable>
-            <Pressable
-              disabled={saving}
-              onPress={saveCapture}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                pressed && styles.pressed,
-                saving && styles.disabled
-              ]}
-            >
-              <Text style={styles.primaryButtonText}>{saving ? "Saving..." : "Save and analyze"}</Text>
-            </Pressable>
-          </View>
-          {draft.asset ? <Text style={styles.meta}>Attached: {draft.asset.name}</Text> : null}
-        </View>
-
-        <View style={styles.searchPanel}>
-          <Text style={styles.sectionTitle}>Search</Text>
-          <View style={styles.row}>
-            <TextInput
-              autoCapitalize="none"
-              onChangeText={setQuery}
-              onSubmitEditing={runSearch}
-              placeholder="Search memory, entities, notes, or intent"
-              placeholderTextColor={colors.muted}
-              style={[styles.input, styles.flexInput]}
-              value={query}
-            />
-            <Pressable
-              disabled={searching}
-              onPress={runSearch}
-              style={({ pressed }) => [
-                styles.secondaryButton,
-                styles.smallButton,
-                pressed && styles.pressed,
-                searching && styles.disabled
-              ]}
-            >
-              <Text style={styles.secondaryButtonText}>{searching ? "..." : "Go"}</Text>
-            </Pressable>
-          </View>
-          {searchResults.length ? (
-            <View style={styles.searchResults}>
-              {searchResults.slice(0, 5).map((result) => {
-                const resultCapture = result.capture ?? result.captures;
-                return (
-                  <Pressable
-                    key={`${result.capture_id}-${result.id}`}
-                    onPress={() => openCapture(result.capture_id)}
-                    style={({ pressed }) => [styles.searchResult, pressed && styles.pressed]}
-                  >
-                    <Text numberOfLines={1} style={styles.searchTitle}>
-                      {resultCapture ? captureTitle(resultCapture) : result.capture_id.slice(0, 8)}
-                    </Text>
-                    <Text numberOfLines={2} style={styles.meta}>
-                      {result.match_context}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : query.trim() ? (
-            <Text style={styles.empty}>No visible search matches yet.</Text>
-          ) : null}
-        </View>
-
-        <View style={styles.listHeader}>
-          <View>
-            <Text style={styles.sectionTitle}>Recent captures</Text>
-            <Text style={styles.meta}>{captures.length} loaded</Text>
-          </View>
-          <Pressable onPress={loadQualityReport} style={styles.textButton}>
-            <Text style={styles.textButtonLabel}>Quality report</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
+  const updateDraftSourceText = useCallback((sourceText: string) => {
+    setDraft((current) => ({ ...current, sourceText }));
+  }, []);
 
   function CaptureRow({ item }: { item: Capture }) {
     const intent = activeIntent(item);
@@ -1334,7 +1497,31 @@ export default function App() {
         contentContainerStyle={styles.content}
         data={captures}
         keyExtractor={(capture) => capture.id}
-        ListHeaderComponent={<HomeHeader />}
+        ListHeaderComponent={
+          <HomeHeader
+            capturesCount={captures.length}
+            confirmPassword={confirmPassword}
+            draft={draft}
+            newPassword={newPassword}
+            onConfirmPasswordChange={setConfirmPassword}
+            onLoadQualityReport={loadQualityReport}
+            onNewPasswordChange={setNewPassword}
+            onOpenCapture={openCapture}
+            onPickMedia={pickMedia}
+            onQueryChange={setQuery}
+            onSaveCapture={saveCapture}
+            onSearch={runSearch}
+            onSetAccountPassword={setAccountPassword}
+            onSourceTextChange={updateDraftSourceText}
+            onSourceUrlChange={updateDraftSourceUrl}
+            query={query}
+            saving={saving}
+            savingPassword={savingPassword}
+            searchResults={searchResults}
+            searching={searching}
+            showAccount={showAccount}
+          />
+        }
         ListEmptyComponent={
           loadingCaptures ? (
             <View style={styles.loadingBlock}>
@@ -1763,21 +1950,41 @@ export default function App() {
     );
   }
 
+  async function openExternalUrl(url: string) {
+    try {
+      await Linking.openURL(url);
+    } catch (error) {
+      Alert.alert("Could not open link", error instanceof Error ? error.message : "Unknown error");
+    }
+  }
+
   function renderSourceTab(capture: Capture) {
-    const previewUrl = selectedPreview?.signed_url || selectedPreview?.public_url || capture.thumbnail_url;
+    const sourceUrl = safeHttpUrl(capture.source_url);
     return (
       <View style={styles.detailStack}>
         <View style={styles.panel}>
           <Text style={styles.subhead}>Source preview</Text>
-          {previewUrl ? (
-            <Image source={{ uri: previewUrl }} style={styles.preview} resizeMode="cover" />
+          {selectedMedia?.kind === "image" ? (
+            <Image source={{ uri: selectedMedia.url }} style={styles.preview} resizeMode="cover" />
+          ) : selectedMedia?.kind === "video" ? (
+            <View style={styles.videoPreview}>
+              <Pressable onPress={() => openExternalUrl(selectedMedia.url)} style={styles.secondaryButton}>
+                <Text style={styles.secondaryButtonText}>Open video</Text>
+              </Pressable>
+            </View>
           ) : (
-            <Text style={styles.empty}>No image preview for this capture.</Text>
+            <Text style={styles.empty}>No source preview for this capture.</Text>
           )}
         </View>
         <View style={styles.panel}>
           <Text style={styles.subhead}>Source URL</Text>
-          <Text style={styles.bodyText}>{capture.source_url || "None"}</Text>
+          {sourceUrl ? (
+            <Pressable onPress={() => openExternalUrl(sourceUrl)}>
+              <Text style={styles.sourceLink}>{capture.source_url}</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.bodyText}>{capture.source_url || "None"}</Text>
+          )}
         </View>
         <View style={styles.panel}>
           <Text style={styles.subhead}>Source text</Text>
@@ -2305,6 +2512,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22
   },
+  sourceLink: {
+    color: colors.accentDark,
+    fontSize: 15,
+    lineHeight: 22,
+    textDecorationLine: "underline"
+  },
   bodyStrong: {
     color: colors.ink,
     fontSize: 15,
@@ -2458,6 +2671,15 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     backgroundColor: colors.panelStrong,
     borderRadius: 12,
+    width: "100%"
+  },
+  videoPreview: {
+    alignItems: "center",
+    aspectRatio: 1,
+    backgroundColor: colors.panelStrong,
+    borderRadius: 12,
+    justifyContent: "center",
+    padding: 16,
     width: "100%"
   },
   loadingBlock: {

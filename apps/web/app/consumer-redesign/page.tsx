@@ -14,7 +14,6 @@ import {
   Search,
   Settings,
   Share2,
-  Sparkles,
   StickyNote
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -38,37 +37,15 @@ const language = {
   }
 } as const;
 
-const directions = [
-  {
-    id: "native-calm",
-    name: "Native Calm",
-    note: "Warm, familiar, low-friction.",
-    accent: "Quiet green"
-  },
-  {
-    id: "personal-archive",
-    name: "Personal Archive",
-    note: "Tactile saved-memory rows.",
-    accent: "Soft amber"
-  },
-  {
-    id: "fast-utility",
-    name: "Fast Utility",
-    note: "Dense, direct, dogfood-ready.",
-    accent: "Clear blue"
-  }
-] as const;
-
 const flows = [
-  { id: "zero", label: "Today", shortLabel: "Today" },
+  { id: "zero", label: "Zero-Capture Today", shortLabel: "Today" },
   { id: "sheet", label: "Capture Sheet", shortLabel: "Capture" },
   { id: "receipt", label: "Capture Receipt", shortLabel: "Saved" },
   { id: "notification", label: "Completion Notification", shortLabel: "Ready" },
   { id: "quick-edit", label: "Quick Edit", shortLabel: "Edit" },
-  { id: "today-review", label: "Today with Review", shortLabel: "Review" }
+  { id: "today-review", label: "Today With Review", shortLabel: "Review" }
 ] as const;
 
-type DirectionId = (typeof directions)[number]["id"];
 type FlowId = (typeof flows)[number]["id"];
 
 const mockCapture = {
@@ -87,61 +64,55 @@ const mockCapture = {
 };
 
 const nearbyCaptures = [
-  { title: "Ramen reel", meta: "try this place | reminder suggested | NYC restaurants" },
+  { title: "Ramen reel", meta: "try this place | reminder suggestion | NYC restaurants" },
   { title: "Concert poster", meta: "date found | needs review" }
 ];
 
+const reviewItems = [
+  {
+    title: "Ramen reel",
+    state: language.confidence.maybe,
+    detail: "Reminder suggestion needs confirmation"
+  },
+  {
+    title: "Concert poster",
+    state: language.confidence.notSure,
+    detail: "Date found, intent needs a quick look"
+  }
+];
+
 export default function ConsumerRedesignPage() {
-  const [directionId, setDirectionId] = useState<DirectionId>("native-calm");
   const [flowId, setFlowId] = useState<FlowId>("zero");
 
-  const direction = useMemo(
-    () => directions.find((item) => item.id === directionId) ?? directions[0],
-    [directionId]
-  );
   const flow = useMemo(() => flows.find((item) => item.id === flowId) ?? flows[0], [flowId]);
 
   return (
-    <main className={styles.page} data-direction={directionId}>
+    <main className={styles.page}>
       <section className={styles.workspace} aria-labelledby="prototype-title">
         <div className={styles.leftRail}>
-          <p className={styles.eyebrow}>Consumer loop prototype</p>
+          <p className={styles.eyebrow}>Mobile UI prototype</p>
           <h1 id="prototype-title">{language.appName}</h1>
           <p className={styles.lede}>
-            Compare the first save-to-review loop without changing the dogfood mobile app.
+            A phone-native save-to-review loop: instant capture, quiet analysis, and fast meaning
+            correction.
           </p>
 
-          <div className={styles.controlGroup} aria-label="Visual direction">
+          <div className={styles.directionPanel} aria-label="Canonical design direction">
             <p className={styles.controlLabel}>Direction</p>
-            <div className={styles.directionList}>
-              {directions.map((item) => (
-                <button
-                  className={styles.directionButton}
-                  data-active={item.id === directionId}
-                  key={item.id}
-                  onClick={() => setDirectionId(item.id)}
-                  type="button"
-                >
-                  <span>
-                    <strong>{item.name}</strong>
-                    <small>{item.note}</small>
-                  </span>
-                  <span className={styles.directionAccent}>{item.accent}</span>
-                </button>
-              ))}
-            </div>
+            <h2>Native Calm, Personal Memory</h2>
+            <p>
+              Warm paper surfaces, graphite text, muted green actions, amber review cues. The
+              interface earns trust by saving first and asking only when a suggestion creates an
+              obligation.
+            </p>
           </div>
         </div>
 
         <div className={styles.previewStage}>
           <div className={styles.stageHeader}>
             <div>
-              <p className={styles.eyebrow}>{direction.name}</p>
+              <p className={styles.eyebrow}>Current step</p>
               <h2>{flow.label}</h2>
-            </div>
-            <div className={styles.stageStatus}>
-              <Sparkles aria-hidden="true" size={16} />
-              <span>{language.confidence.maybe}</span>
             </div>
           </div>
 
@@ -161,6 +132,7 @@ export default function ConsumerRedesignPage() {
             {flows.map((item, index) => (
               <button
                 className={styles.flowButton}
+                aria-current={item.id === flowId ? "step" : undefined}
                 data-active={item.id === flowId}
                 key={item.id}
                 onClick={() => setFlowId(item.id)}
@@ -176,7 +148,7 @@ export default function ConsumerRedesignPage() {
             <p className={styles.controlLabel}>Guardrails</p>
             <CheckLine>Capture saves before analysis.</CheckLine>
             <CheckLine>Reminder stays a suggestion.</CheckLine>
-            <CheckLine>Quick Edit is sentence-like.</CheckLine>
+            <CheckLine>Quick Edit asks only for meaningful corrections.</CheckLine>
           </div>
         </aside>
       </section>
@@ -191,10 +163,13 @@ function PhoneScreen({
   flowId: FlowId;
   setFlowId: (flowId: FlowId) => void;
 }) {
+  const showFab = flowId === "zero" || flowId === "today-review";
+  const showNavigation = flowId === "zero" || flowId === "today-review";
+
   return (
     <div className={styles.appSurface}>
-      <TopBar title={flowId === "sheet" ? "Capture" : "Today"} />
-      <div className={styles.screenBody}>
+      <TopBar title={flowId === "sheet" ? "Capture" : flowId === "quick-edit" ? "Quick Edit" : "Today"} />
+      <div className={`${styles.screenBody} ${showNavigation ? "" : styles.screenBodyFocused}`}>
         {flowId === "zero" ? <ZeroCaptureToday setFlowId={setFlowId} /> : null}
         {flowId === "sheet" ? <CaptureSheet setFlowId={setFlowId} /> : null}
         {flowId === "receipt" ? <CaptureReceipt setFlowId={setFlowId} /> : null}
@@ -202,16 +177,18 @@ function PhoneScreen({
         {flowId === "quick-edit" ? <QuickEdit setFlowId={setFlowId} /> : null}
         {flowId === "today-review" ? <TodayReview setFlowId={setFlowId} /> : null}
       </div>
-      <BottomNav />
-      <button
-        aria-label="New capture"
-        className={styles.fab}
-        onClick={() => setFlowId("sheet")}
-        title="New capture"
-        type="button"
-      >
-        <Plus aria-hidden="true" size={22} />
-      </button>
+      {showNavigation ? <BottomNav /> : null}
+      {showFab ? (
+        <button
+          aria-label="New capture"
+          className={styles.fab}
+          onClick={() => setFlowId("sheet")}
+          title="New capture"
+          type="button"
+        >
+          <Plus aria-hidden="true" size={22} />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -236,16 +213,24 @@ function ZeroCaptureToday({ setFlowId }: { setFlowId: (flowId: FlowId) => void }
       <div className={styles.emptyHero}>
         <p className={styles.todayDate}>Monday, May 25</p>
         <h2>Save something you want to remember</h2>
-        <button className={styles.primaryAction} type="button">
-          <Share2 aria-hidden="true" size={18} />
-          <span>Share from another app</span>
-        </button>
       </div>
 
+      <section className={styles.shareInstruction} aria-label="Native share guidance">
+        <span className={styles.instructionIcon}>
+          <Share2 aria-hidden="true" size={18} />
+        </span>
+        <div>
+          <h3>Best first save: use Sharebook from another app</h3>
+          <p>Use the share button in Safari, Instagram, Maps, or Photos.</p>
+        </div>
+      </section>
+
+      <button className={styles.primaryAction} onClick={() => setFlowId("sheet")} type="button">
+        <Link2 aria-hidden="true" size={18} />
+        <span>Paste copied link</span>
+      </button>
+
       <div className={styles.actionGrid}>
-        <ActionButton icon={<Link2 aria-hidden="true" size={17} />} onClick={() => setFlowId("sheet")}>
-          Paste link
-        </ActionButton>
         <ActionButton
           icon={<StickyNote aria-hidden="true" size={17} />}
           onClick={() => setFlowId("sheet")}
@@ -262,7 +247,7 @@ function ZeroCaptureToday({ setFlowId }: { setFlowId: (flowId: FlowId) => void }
 
       <section className={styles.plainSection}>
         <h3>Recent</h3>
-        <p>No captures yet</p>
+        <p>No captures yet. Your first save will appear here immediately.</p>
       </section>
     </section>
   );
@@ -334,7 +319,7 @@ function CaptureReceipt({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) 
       <div className={styles.progressBlock}>
         <div className={styles.progressLabel}>
           <span>{language.states.analyzing}</span>
-          <span>about 20 sec</span>
+          <span>You can leave now</span>
         </div>
         <div className={styles.progressTrack}>
           <span />
@@ -347,7 +332,7 @@ function CaptureReceipt({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) 
         </button>
         <button className={styles.primaryAction} onClick={() => setFlowId("notification")} type="button">
           <Bell aria-hidden="true" size={18} />
-          <span>Notify me</span>
+          <span>Tell me when ready</span>
         </button>
       </div>
     </section>
@@ -368,7 +353,7 @@ function CompletionNotification({ setFlowId }: { setFlowId: (flowId: FlowId) => 
           <small>now</small>
         </div>
         <h2>{language.states.ready}: ramen place in SoHo</h2>
-        <p>Try place, NYC restaurants, reminder suggested</p>
+        <p>Intent and collection look useful. Reminder suggestion needs your say.</p>
       </button>
       <button className={styles.secondaryAction} onClick={() => setFlowId("quick-edit")} type="button">
         Open Quick Edit
@@ -383,14 +368,16 @@ function QuickEdit({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
       <div className={styles.captureSummary}>
         <p>{language.states.saved}</p>
         <h2>{mockCapture.title}</h2>
+        <span>{mockCapture.source}</span>
       </div>
 
       <div className={styles.sentenceEditor}>
         <p>
-          Saved as <Chip>{mockCapture.intent}</Chip> in <Chip>{mockCapture.collection}</Chip>.
+          Saved as <Chip label="Change intent">{mockCapture.intent}</Chip> in{" "}
+          <Chip label="Change collection">{mockCapture.collection}</Chip>.
         </p>
         <p>
-          Reminder suggested: <Chip>{mockCapture.reminder}</Chip>.
+          Reminder suggestion: <Chip label="Review reminder suggestion">{mockCapture.reminder}</Chip>.
         </p>
       </div>
 
@@ -398,23 +385,23 @@ function QuickEdit({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
         <Rationale label="Intent" text={mockCapture.rationale.intent} />
         <Rationale label="Collection" text={mockCapture.rationale.collection} />
         <Rationale label="Reminder" text={mockCapture.rationale.reminder} />
-        <Rationale label="Place" text={mockCapture.rationale.place} />
       </div>
 
-      <div className={styles.chipPicker}>
-        <p>Saved as</p>
+      <section className={styles.suggestionBlock} aria-label="Reminder suggestion">
         <div>
-          <Chip selected>try this place</Chip>
-          <Chip>send/share</Chip>
-          <Chip>plan trip</Chip>
-          <Chip>review later</Chip>
+          <p>{language.states.reminderSuggestion}</p>
+          <strong>{mockCapture.reminder}</strong>
+          <span>It stays a suggestion until you confirm it.</span>
         </div>
-      </div>
+        <button className={styles.secondaryAction} type="button">
+          Confirm
+        </button>
+      </section>
 
       <div className={styles.bottomActions}>
         <button className={styles.primaryAction} onClick={() => setFlowId("today-review")} type="button">
           <Check aria-hidden="true" size={18} />
-          <span>Accept</span>
+          <span>Keep meaning</span>
         </button>
         <button className={styles.secondaryAction} type="button">Change</button>
         <button className={styles.textAction} onClick={() => setFlowId("today-review")} type="button">
@@ -436,10 +423,22 @@ function TodayReview({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
       <button className={styles.reviewModule} onClick={() => setFlowId("quick-edit")} type="button">
         <div>
           <p>{language.states.reviewNeeds}</p>
-          <span>{language.confidence.maybe} suggestions waiting</span>
+          <span>Suggestions waiting, no reminders added yet</span>
         </div>
         <ChevronRight aria-hidden="true" size={19} />
       </button>
+
+      <section className={styles.reviewQueue} aria-label="Review queue">
+        {reviewItems.map((item) => (
+          <button className={styles.reviewItem} key={item.title} onClick={() => setFlowId("quick-edit")} type="button">
+            <span>
+              <strong>{item.title}</strong>
+              <small>{item.detail}</small>
+            </span>
+            <em>{item.state}</em>
+          </button>
+        ))}
+      </section>
 
       <section className={styles.plainSection}>
         <h3>Recently saved</h3>
@@ -508,13 +507,15 @@ function BottomNav() {
 
 function Chip({
   children,
+  label,
   selected = false
 }: {
   children: React.ReactNode;
+  label?: string;
   selected?: boolean;
 }) {
   return (
-    <button className={styles.editorChip} data-selected={selected} type="button">
+    <button aria-label={label} className={styles.editorChip} data-selected={selected} type="button">
       {children}
     </button>
   );

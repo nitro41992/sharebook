@@ -5,6 +5,7 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  EyeOff,
   Folder,
   FolderPlus,
   Image as ImageIcon,
@@ -16,7 +17,6 @@ import {
   Search,
   Settings,
   Share2,
-  SlidersHorizontal,
   StickyNote
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -70,25 +70,55 @@ const mockCapture = {
   }
 };
 
-const nearbyCaptures = [
-  { title: "Ramen reel", meta: "try this place | reminder suggestion | NYC restaurants" },
-  { title: "Concert poster", meta: "date found | needs review" }
-];
-
-const collectionResults = [
+const memoryObjects = [
   {
+    id: "ramen-reel",
     title: "Ramen reel from Instagram",
-    source: "Instagram reel",
-    meta: "Matched place: SoHo | intent: try this place",
-    collection: "NYC restaurants"
+    source: "Instagram",
+    sourceDetail: "Reel saved 3:36 PM",
+    context: "Caption and storefront text point to a ramen shop in SoHo.",
+    collection: "NYC restaurants",
+    thumbnailTone: "ramen",
+    status: language.states.reminderSuggestion,
+    reasons: [
+      { label: "Place", value: "SoHo" },
+      { label: "Intent", value: "try this place" },
+      { label: "Source", value: "Instagram" }
+    ]
   },
   {
+    id: "noodle-list",
     title: "Late-night noodle list",
-    source: "Safari article",
-    meta: "Matched collection and ramen",
-    collection: "NYC restaurants"
+    source: "Safari",
+    sourceDetail: "Article saved yesterday",
+    context: "Mentions three downtown ramen spots and a late-night dinner list.",
+    collection: "NYC restaurants",
+    thumbnailTone: "article",
+    status: "Indexed with source text",
+    reasons: [
+      { label: "Collection", value: "NYC restaurants" },
+      { label: "Entity", value: "ramen" },
+      { label: "Text", value: "late-night" }
+    ]
+  },
+  {
+    id: "concert-poster",
+    title: "Concert poster screenshot",
+    source: "Photos",
+    sourceDetail: "Screenshot saved 12:04 PM",
+    context: "OCR found a date and venue, but the reminder still needs review.",
+    collection: "Weekend ideas",
+    thumbnailTone: "poster",
+    status: "Date found",
+    reasons: [
+      { label: "OCR", value: "June 14" },
+      { label: "Intent", value: "review later" },
+      { label: "State", value: "needs review" }
+    ]
   }
 ];
+
+const recentSearches = ["that ramen place near soho", "gift idea from instagram", "concert poster with date"];
 
 const collections = [
   {
@@ -111,16 +141,40 @@ const collections = [
   }
 ];
 
-const reviewItems = [
+const weekDays = [
+  { day: "M", date: "25", active: true },
+  { day: "T", date: "26" },
+  { day: "W", date: "27" },
+  { day: "T", date: "28" },
+  { day: "F", date: "29" },
+  { day: "S", date: "30" },
+  { day: "S", date: "31" }
+];
+
+const agendaItems = [
   {
-    title: "Ramen reel",
-    state: language.confidence.maybe,
-    detail: "Reminder suggestion needs confirmation"
+    time: "7:00",
+    meridiem: "PM",
+    title: "Ramen place in SoHo",
+    meta: "Reminder suggestion from Instagram reel",
+    state: "Review",
+    tone: "blue"
   },
   {
+    time: "8:30",
+    meridiem: "PM",
     title: "Concert poster",
-    state: language.confidence.notSure,
-    detail: "Date found, intent needs a quick look"
+    meta: "Date found, reminder not added",
+    state: "Maybe",
+    tone: "amber"
+  },
+  {
+    time: "Later",
+    meridiem: "",
+    title: "Late-night noodle list",
+    meta: "Saved to NYC restaurants",
+    state: "Saved",
+    tone: "green"
   }
 ];
 
@@ -136,17 +190,15 @@ export default function ConsumerRedesignPage() {
           <p className={styles.eyebrow}>Mobile UI prototype</p>
           <h1 id="prototype-title">{language.appName}</h1>
           <p className={styles.lede}>
-            A phone-native save-to-review loop: instant capture, quiet analysis, and fast meaning
-            correction.
+            A softer consumer direction for saving the things you will want again.
           </p>
 
           <div className={styles.directionPanel} aria-label="Canonical design direction">
             <p className={styles.controlLabel}>Direction</p>
-            <h2>Native Calm, Personal Memory</h2>
+            <h2>Modern Memory App</h2>
             <p>
-              Warm paper surfaces, graphite text, muted green actions, amber review cues. The
-              interface earns trust by saving first and asking only when a suggestion creates an
-              obligation.
+              White space, signal-blue focus, pill controls, soft media objects, and almost no
+              operational chrome.
             </p>
           </div>
         </div>
@@ -187,12 +239,7 @@ export default function ConsumerRedesignPage() {
             ))}
           </div>
 
-          <div className={styles.checklist}>
-            <p className={styles.controlLabel}>Guardrails</p>
-            <CheckLine>Capture saves before analysis.</CheckLine>
-            <CheckLine>Reminder stays a suggestion.</CheckLine>
-            <CheckLine>Quick Edit asks only for meaningful corrections.</CheckLine>
-          </div>
+          <div className={styles.checklist} aria-hidden="true" />
         </aside>
       </section>
     </main>
@@ -272,7 +319,7 @@ function ZeroCaptureToday({ setFlowId }: { setFlowId: (flowId: FlowId) => void }
     <section className={styles.screenStack}>
       <div className={styles.emptyHero}>
         <p className={styles.todayDate}>Monday, May 25</p>
-        <h2>Save something you want to remember</h2>
+        <h2>Save it before the thought slips</h2>
       </div>
 
       <section className={styles.shareInstruction} aria-label="Native share guidance">
@@ -280,8 +327,8 @@ function ZeroCaptureToday({ setFlowId }: { setFlowId: (flowId: FlowId) => void }
           <Share2 aria-hidden="true" size={18} />
         </span>
         <div>
-          <h3>Best first save: use Sharebook from another app</h3>
-          <p>Use the share button in Safari, Instagram, Maps, or Photos.</p>
+          <h3>Share from any app</h3>
+          <p>Links, screenshots, places, posts, notes.</p>
         </div>
       </section>
 
@@ -307,7 +354,7 @@ function ZeroCaptureToday({ setFlowId }: { setFlowId: (flowId: FlowId) => void }
 
       <section className={styles.plainSection}>
         <h3>Recent</h3>
-        <p>No captures yet. Your first save will appear here immediately.</p>
+        <p>Your first save will appear here.</p>
       </section>
     </section>
   );
@@ -477,11 +524,22 @@ function QuickEdit({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
 }
 
 function TodayReview({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
+  const recentObjects = memoryObjects.filter((item) => item.id !== "noodle-list");
+
   return (
     <section className={styles.screenStack}>
       <div className={styles.todayHeader}>
         <p className={styles.todayDate}>Monday, May 25</p>
         <h2>Today</h2>
+      </div>
+
+      <div className={styles.weekStrip} aria-label="Week">
+        {weekDays.map((item) => (
+          <button data-active={item.active} key={`${item.day}-${item.date}`} type="button">
+            <span>{item.day}</span>
+            <strong>{item.date}</strong>
+          </button>
+        ))}
       </div>
 
       <button className={styles.reviewModule} onClick={() => setFlowId("quick-edit")} type="button">
@@ -492,36 +550,38 @@ function TodayReview({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
         <ChevronRight aria-hidden="true" size={19} />
       </button>
 
-      <section className={styles.reviewQueue} aria-label="Review queue">
-        {reviewItems.map((item) => (
-          <button className={styles.reviewItem} key={item.title} onClick={() => setFlowId("quick-edit")} type="button">
-            <span>
-              <strong>{item.title}</strong>
-              <small>{item.detail}</small>
-            </span>
-            <em>{item.state}</em>
-          </button>
-        ))}
-      </section>
-
-      <section className={styles.plainSection}>
-        <h3>Recently saved</h3>
-        <div className={styles.captureRows}>
-          {nearbyCaptures.map((item) => (
-            <button className={styles.captureRow} key={item.title} type="button">
-              <span>
-                <strong>{item.title}</strong>
-                <small>{item.meta}</small>
+      <section className={styles.agendaPanel} aria-label="Today agenda">
+        <div className={styles.sectionHeaderRow}>
+          <h3>Agenda</h3>
+          <span>Suggestions only</span>
+        </div>
+        <div className={styles.agendaTimeline}>
+          {agendaItems.map((item) => (
+            <button className={styles.agendaItem} key={item.title} onClick={() => setFlowId("quick-edit")} type="button">
+              <span className={styles.agendaTime}>
+                <strong>{item.time}</strong>
+                {item.meridiem ? <small>{item.meridiem}</small> : null}
               </span>
-              <ChevronRight aria-hidden="true" size={17} />
+              <span className={styles.agendaCard}>
+                <span className={styles.agendaDot} data-tone={item.tone} />
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.meta}</small>
+                </span>
+                <em>{item.state}</em>
+              </span>
             </button>
           ))}
         </div>
       </section>
 
       <section className={styles.plainSection}>
-        <h3>Coming up</h3>
-        <p>Nothing coming up</p>
+        <h3>Recently saved</h3>
+        <div className={styles.memoryList}>
+          {recentObjects.map((item) => (
+            <MemoryObjectRow item={item} key={item.id} onClick={() => setFlowId("collection-detail")} />
+          ))}
+        </div>
       </section>
 
       <section className={styles.placeStrip}>
@@ -533,42 +593,64 @@ function TodayReview({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
 }
 
 function SearchScreen({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
+  const [showRecentSearches, setShowRecentSearches] = useState(false);
+
   return (
     <section className={styles.screenStack}>
+      <div className={styles.searchIntro}>
+        <h2>Search by what you remember</h2>
+        <p>Places, screenshots, links, notes, and fuzzy fragments.</p>
+      </div>
+
       <label className={styles.searchField}>
         <Search aria-hidden="true" size={18} />
-        <input defaultValue="ramen near soho" aria-label="Search saved captures" />
+        <input defaultValue="that ramen place near soho" aria-label="Search saved captures" />
       </label>
 
       <div className={styles.filterRow} aria-label="Search filters">
-        <button data-active="true" type="button">All</button>
+        <button data-active="true" type="button">All memory</button>
         <button data-active="true" onClick={() => setFlowId("collection-detail")} type="button">
           NYC restaurants
         </button>
+        <button type="button">Instagram</button>
         <button type="button">Place</button>
         <button type="button">Time</button>
       </div>
 
+      <section className={styles.privacyBlock} aria-label="Recent searches privacy">
+        <button
+          aria-expanded={showRecentSearches}
+          className={styles.privacyToggle}
+          onClick={() => setShowRecentSearches((current) => !current)}
+          type="button"
+        >
+          <EyeOff aria-hidden="true" size={16} />
+          <span>{showRecentSearches ? "Hide recent searches" : "Recent searches hidden"}</span>
+          <ChevronRight aria-hidden="true" data-open={showRecentSearches} size={16} />
+        </button>
+        {showRecentSearches ? (
+          <div className={styles.recentSearchList}>
+            {recentSearches.map((query) => (
+              <button key={query} type="button">{query}</button>
+            ))}
+          </div>
+        ) : (
+          <p>Queries stay collapsed by default because saved-memory searches can be personal.</p>
+        )}
+      </section>
+
       <section className={styles.plainSection}>
-        <h3>Results</h3>
-        <div className={styles.resultList}>
-          {collectionResults.map((item) => (
-            <button className={styles.resultRow} key={item.title} onClick={() => setFlowId("collection-detail")} type="button">
-              <span>
-                <strong>{item.title}</strong>
-                <small>{item.source}</small>
-                <em>{item.meta}</em>
-              </span>
-              <span className={styles.collectionBadge}>{item.collection}</span>
-            </button>
+        <div className={styles.sectionHeaderRow}>
+          <h3>Results</h3>
+          <span>3 indexed saves</span>
+        </div>
+        <div className={styles.memoryList}>
+          {memoryObjects.map((item) => (
+            <MemoryObjectRow item={item} key={item.id} onClick={() => setFlowId("collection-detail")} />
           ))}
         </div>
       </section>
 
-      <section className={styles.searchNote}>
-        <SlidersHorizontal aria-hidden="true" size={17} />
-        <p>Production search should combine semantic memory with collection, place, time, source, and intent filters.</p>
-      </section>
     </section>
   );
 }
@@ -624,15 +706,9 @@ function CollectionDetail({ setFlowId }: { setFlowId: (flowId: FlowId) => void }
 
       <section className={styles.plainSection}>
         <h3>All in this collection</h3>
-        <div className={styles.resultList}>
-          {collectionResults.map((item) => (
-            <button className={styles.captureRow} key={item.title} type="button">
-              <span>
-                <strong>{item.title}</strong>
-                <small>{item.meta}</small>
-              </span>
-              <ChevronRight aria-hidden="true" size={17} />
-            </button>
+        <div className={styles.memoryList}>
+          {memoryObjects.slice(0, 2).map((item) => (
+            <MemoryObjectRow item={item} key={item.id} />
           ))}
         </div>
       </section>
@@ -728,6 +804,54 @@ function BottomNav({
   );
 }
 
+function MemoryObjectRow({
+  item,
+  onClick
+}: {
+  item: (typeof memoryObjects)[number];
+  onClick?: () => void;
+}) {
+  return (
+    <button className={styles.memoryObjectRow} onClick={onClick} type="button">
+      <SourceThumbnail item={item} />
+      <span className={styles.memoryCopy}>
+        <span className={styles.memoryKicker}>
+          <span>{item.source}</span>
+          <span>{item.sourceDetail}</span>
+        </span>
+        <strong>{item.title}</strong>
+        <small>{item.context}</small>
+        <EvidenceChips reasons={item.reasons} />
+      </span>
+      <span className={styles.memoryMeta}>
+        <span className={styles.collectionBadge}>{item.collection}</span>
+        <em>{item.status}</em>
+      </span>
+    </button>
+  );
+}
+
+function SourceThumbnail({ item }: { item: (typeof memoryObjects)[number] }) {
+  return (
+    <span aria-hidden="true" className={styles.sourceThumbnail} data-tone={item.thumbnailTone}>
+      <span>{item.source.slice(0, 2)}</span>
+    </span>
+  );
+}
+
+function EvidenceChips({ reasons }: { reasons: (typeof memoryObjects)[number]["reasons"] }) {
+  return (
+    <span className={styles.evidenceChips} aria-label="Match reasons">
+      {reasons.map((reason) => (
+        <span className={styles.evidenceChip} key={`${reason.label}-${reason.value}`}>
+          <b>{reason.label}</b>
+          {reason.value}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function Chip({
   children,
   label,
@@ -753,14 +877,5 @@ function Rationale({ label, text }: { label: string; text: string }) {
         <span>{text}</span>
       </p>
     </div>
-  );
-}
-
-function CheckLine({ children }: { children: React.ReactNode }) {
-  return (
-    <p className={styles.checkLine}>
-      <Check aria-hidden="true" size={15} />
-      <span>{children}</span>
-    </p>
   );
 }

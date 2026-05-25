@@ -18,26 +18,26 @@ The first consumer design sprint should optimize for the share-to-understanding 
 4. Sharebook may show progress and send a Capture Completion Notification.
 5. Tapping completion opens focused Quick Edit.
 6. User accepts, changes, or dismisses inferred intent, suggested Reminder, and Collection attachment.
-7. Sharebook preserves the Capture and makes it retrievable through Today, Search, Library, Map, and Agenda.
+7. Sharebook preserves the Capture and makes it retrievable through Upcoming, Search, Library, Map, and Agenda.
 
 Instant save is the prerequisite trust moment. Useful post-analysis Quick Edit is the first differentiated wow moment.
 
 ## Retrieval Model
 
-Search, Map, Agenda, Today, Library, and Review Inbox are Retrieval Lenses over Captures and related entities. They are not separate saved object types.
+Search, Map, Agenda, Upcoming, Library, and Review Inbox are Retrieval Lenses over Captures and related entities. They are not separate saved object types.
 
 - Search retrieves by fuzzy memory, meaning, entity, Save Intent, Collection, place, time, source, or remembered context.
 - Map retrieves by place-like Captured Entities, not where the user happened to be when saving.
 - Agenda retrieves time-relevant Captures and Confirmed Reminders. Suggestions go to review, not the schedule.
 - Library is organized memory: saved Captures browsed by recency, place, time, Collection, and archived state.
-- Today is the default home lens. With no Captures, it becomes a first-capture empty state.
+- Upcoming is the default home lens. It spans across days or weeks and should not imply the user has something to check every day. With no Captures, it becomes a first-capture empty state.
 - Review Inbox is one segmented triage surface for low-confidence intent, suggested Reminders, suggested Collections, failed analysis, and Quick Edit actions.
 
 ## Navigation
 
 Primary mobile navigation:
 
-- Today
+- Upcoming
 - Search
 - Library
 - Settings
@@ -112,7 +112,7 @@ Confidence States should be supported by concise rationale when the user is aske
 Behavior mapping:
 
 - Looks right: may persist when low-risk and reversible, but remains editable.
-- Maybe: must appear as a suggestion in Quick Edit, Review Inbox, or Today review prompts; it must not create obligations.
+- Maybe: must appear as a suggestion in Quick Edit, Review Inbox, or Upcoming review prompts; it must not create obligations.
 - Not sure: must appear in Review Inbox as something to resolve.
 - Couldn't tell: preserves the Capture, avoids inventing, and offers a useful fallback such as review later or add note.
 
@@ -120,7 +120,7 @@ Anything Sharebook does not confidently act on must be visible and actionable so
 
 ## First-Run Empty State
 
-Zero-capture Today should not feel like an empty dashboard. Its job is to help the user create the first real Capture.
+Zero-capture Upcoming should not feel like an empty dashboard or daily agenda. Its job is to help the user create the first real Capture.
 
 Primary first-run action:
 
@@ -134,9 +134,9 @@ Fallback actions:
 
 The empty state should teach by action, not by a long onboarding tour.
 
-## Today Review Module
+## Upcoming Review Module
 
-Today should include a gentle review module when suggestions or uncertain predictions are waiting, such as "2 saves need a quick look." This module should surface Maybe, Not sure, and Couldn't tell items without making Today feel like a chore list.
+Upcoming should include a gentle review module when suggestions or uncertain predictions are waiting, such as "2 saves need a quick look." This module should surface Maybe, Not sure, and Couldn't tell items without making Sharebook feel like a daily chore list.
 
 ## Design Principles
 

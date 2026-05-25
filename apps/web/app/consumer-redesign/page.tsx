@@ -16,6 +16,7 @@ import {
   MapPin,
   Plus,
   Search,
+  Settings,
   StickyNote,
   Trash2,
   X
@@ -26,8 +27,8 @@ import styles from "./page.module.css";
 const language = {
   appName: "Sharebook",
   confidence: {
-    high: "Confident",
-    needsReview: "Review",
+    high: "Looks right",
+    needsReview: "Maybe",
     notSure: "Not sure",
     couldNotTell: "Couldn't tell"
   },
@@ -42,16 +43,17 @@ const language = {
 } as const;
 
 const flows = [
-  { id: "zero", label: "Inbox", shortLabel: "Inbox" },
+  { id: "zero", label: "Upcoming", shortLabel: "Upcoming" },
   { id: "sheet", label: "Capture Sheet", shortLabel: "Capture" },
   { id: "receipt", label: "Capture Receipt", shortLabel: "Saved" },
-  { id: "notification", label: "Inbox Update", shortLabel: "Updated" },
-  { id: "capture-detail", label: "Capture Review", shortLabel: "Capture" },
-  { id: "today-review", label: "Upcoming Review", shortLabel: "Upcoming" },
+  { id: "notification", label: "Review Inbox", shortLabel: "Review" },
+  { id: "capture-detail", label: "Quick Edit", shortLabel: "Edit" },
+  { id: "today-review", label: "Suggestion Review", shortLabel: "Review" },
   { id: "search", label: "Search", shortLabel: "Search" },
-  { id: "collections", label: "Collections", shortLabel: "Library" },
+  { id: "collections", label: "Library", shortLabel: "Library" },
   { id: "collection-detail", label: "Collection Detail", shortLabel: "Collection" },
-  { id: "new-collection", label: "Create Empty Collection", shortLabel: "Create" }
+  { id: "new-collection", label: "Create Empty Collection", shortLabel: "Create" },
+  { id: "settings", label: "Settings", shortLabel: "Settings" }
 ] as const;
 
 type FlowId = (typeof flows)[number]["id"];
@@ -333,23 +335,25 @@ function PhoneScreen({
     flowId === "today-review" ||
     flowId === "search" ||
     flowId === "collections" ||
-    flowId === "collection-detail";
+    flowId === "collection-detail" ||
+    flowId === "settings";
   const showTopBar = true;
 
   return (
     <div className={styles.appSurface}>
       {showTopBar ? <TopBar title={titleForFlow(flowId)} /> : null}
       <div className={`${styles.screenBody} ${showNavigation ? "" : styles.screenBodyFocused}`}>
-        {flowId === "zero" ? <InboxScreen openCaptureDetail={openCaptureDetail} setFlowId={setFlowId} /> : null}
+        {flowId === "zero" ? <UpcomingScreen setFlowId={setFlowId} /> : null}
         {flowId === "sheet" ? <CaptureSheet setFlowId={setFlowId} /> : null}
         {flowId === "receipt" ? <CaptureReceipt setFlowId={setFlowId} /> : null}
         {flowId === "notification" ? <InboxScreen isUpdated openCaptureDetail={openCaptureDetail} setFlowId={setFlowId} /> : null}
         {flowId === "capture-detail" ? <CaptureDetail captureId={selectedCaptureId} setFlowId={setFlowId} /> : null}
-        {flowId === "today-review" ? <TodayReview openCaptureDetail={openCaptureDetail} /> : null}
+        {flowId === "today-review" ? <UpcomingReview openCaptureDetail={openCaptureDetail} /> : null}
         {flowId === "search" ? <SearchScreen openCaptureDetail={openCaptureDetail} setFlowId={setFlowId} /> : null}
         {flowId === "collections" ? <CollectionsScreen setFlowId={setFlowId} /> : null}
         {flowId === "collection-detail" ? <CollectionDetail openCaptureDetail={openCaptureDetail} /> : null}
         {flowId === "new-collection" ? <NewCollection setFlowId={setFlowId} /> : null}
+        {flowId === "settings" ? <SettingsScreen /> : null}
       </div>
       {showNavigation ? <BottomNav flowId={flowId} setFlowId={setFlowId} /> : null}
     </div>
@@ -357,15 +361,17 @@ function PhoneScreen({
 }
 
 function titleForFlow(flowId: FlowId) {
-  if (flowId === "zero" || flowId === "notification") return "Inbox";
+  if (flowId === "zero") return "Upcoming";
+  if (flowId === "notification") return "Review Inbox";
   if (flowId === "sheet") return "Capture";
-  if (flowId === "capture-detail") return "Capture";
-  if (flowId === "today-review") return "Upcoming";
+  if (flowId === "capture-detail") return "Quick edit";
+  if (flowId === "today-review") return "Review";
   if (flowId === "search") return "Search";
-  if (flowId === "collections") return "Collections";
+  if (flowId === "collections") return "Library";
   if (flowId === "collection-detail") return "Collection";
   if (flowId === "new-collection") return "New collection";
-  return "Inbox";
+  if (flowId === "settings") return "Settings";
+  return "Upcoming";
 }
 
 function TopBar({ title }: { title: string }) {
@@ -375,6 +381,50 @@ function TopBar({ title }: { title: string }) {
         <h3>{title}</h3>
       </div>
     </header>
+  );
+}
+
+function UpcomingScreen({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
+  return (
+    <section className={styles.screenStack}>
+      <div className={styles.todayHeader}>
+        <p className={styles.todayDate}>No upcoming saves yet</p>
+        <h2>Save something for when it matters later.</h2>
+      </div>
+
+      <section className={styles.shareInstruction} aria-label="Native share instruction">
+        <span className={styles.instructionIcon}>
+          <Plus aria-hidden="true" size={18} />
+        </span>
+        <div>
+          <h3>Share from another app</h3>
+          <p>From the app with the post, place, link, or photo open, use Share and choose Sharebook.</p>
+        </div>
+      </section>
+
+      <div className={styles.actionGrid} aria-label="Fallback capture actions">
+        <ActionButton icon={<Link2 aria-hidden="true" size={17} />} onClick={() => setFlowId("sheet")}>
+          Paste link
+        </ActionButton>
+        <ActionButton icon={<StickyNote aria-hidden="true" size={17} />} onClick={() => setFlowId("sheet")}>
+          Add note
+        </ActionButton>
+        <ActionButton icon={<ImageIcon aria-hidden="true" size={17} />} onClick={() => setFlowId("sheet")}>
+          Upload image
+        </ActionButton>
+        <ActionButton icon={<InboxIcon aria-hidden="true" size={17} />} onClick={() => setFlowId("notification")}>
+          Review inbox
+        </ActionButton>
+      </div>
+
+      <section className={styles.plainSection}>
+        <div className={styles.sectionHeaderRow}>
+          <h3>Coming up</h3>
+          <span>Across days</span>
+        </div>
+        <p>Sharebook only surfaces something here when a saved Capture has a time, place, or review cue worth your attention.</p>
+      </section>
+    </section>
   );
 }
 
@@ -616,31 +666,61 @@ function CaptureDetail({
         </div>
       </section>
 
-      <section className={styles.captureFacts} aria-label="Capture facts">
-        <button className={styles.captureFactButton} onClick={() => setEditor("collection")} type="button">
-          <span>Collection</span>
-          <strong>{item.collection}</strong>
-          <em className={styles.confidenceBadge}>{language.confidence.high}</em>
-          <ChevronRight aria-hidden="true" size={16} />
+      <section className={styles.quickSentence} aria-label="Quick edit">
+        <p>
+          Saved as{" "}
+          <button onClick={() => setEditor("intent")} type="button">{item.intent}</button>
+          {" "}in{" "}
+          <button onClick={() => setEditor("collection")} type="button">{item.collection}</button>
+          .
+        </p>
+        <p>
+          Reminder suggested:{" "}
+          <button data-tone="maybe" onClick={() => setEditor("reminder")} type="button">{item.reminder}</button>
+          .
+        </p>
+        <p>
+          Place:{" "}
+          <button onClick={() => setEditor("place")} type="button">{item.place}</button>
+          .
+        </p>
+      </section>
+
+      <div className={styles.bottomActions}>
+        <button className={styles.primaryAction} onClick={() => setFlowId("zero")} type="button">
+          <Check aria-hidden="true" size={18} />
+          <span>Accept</span>
         </button>
-        <button className={styles.captureFactButton} onClick={() => setEditor("intent")} type="button">
-          <span>Intent</span>
-          <strong>{item.intent}</strong>
-          <em className={styles.confidenceBadge}>{language.confidence.high}</em>
-          <ChevronRight aria-hidden="true" size={16} />
+        <button className={styles.secondaryAction} onClick={() => setEditor("reminder")} type="button">
+          Change
         </button>
-        <button className={styles.captureFactButton} onClick={() => setEditor("place")} type="button">
-          <span>Place</span>
-          <strong>{item.place}</strong>
-          <em className={styles.confidenceBadge}>{language.confidence.high}</em>
-          <ChevronRight aria-hidden="true" size={16} />
+        <button className={styles.textAction} onClick={() => setFlowId("notification")} type="button">
+          Dismiss
         </button>
-        <button className={styles.captureFactButton} onClick={() => setEditor("reminder")} type="button">
-          <span>Reminder</span>
-          <strong>{item.reminder}</strong>
-          <em className={styles.confidenceBadge} data-tone="maybe">{language.confidence.needsReview}</em>
-          <ChevronRight aria-hidden="true" size={16} />
-        </button>
+      </div>
+
+      <section className={styles.rationalePopover} aria-label="Why these suggestions">
+        <div className={styles.rationale}>
+          <Check aria-hidden="true" size={15} />
+          <span>
+            <strong>Intent: {language.confidence.high}</strong>
+            {captureRationale(item, "intent")}
+          </span>
+        </div>
+        <div className={styles.rationale}>
+          <Folder aria-hidden="true" size={15} />
+          <span>
+            <strong>Collection: {language.confidence.high}</strong>
+            {captureRationale(item, "collection")}
+          </span>
+        </div>
+        <div className={styles.rationale}>
+          <CalendarClock aria-hidden="true" size={15} />
+          <span>
+            <strong>Reminder: {language.confidence.needsReview}</strong>
+            {captureRationale(item, "reminder")}
+          </span>
+        </div>
       </section>
 
       <section className={styles.captureExcerpt}>
@@ -653,6 +733,14 @@ function CaptureDetail({
 
     </section>
   );
+}
+
+function captureRationale(item: (typeof memoryObjects)[number], key: keyof typeof mockCapture.rationale) {
+  if (item.id === "ramen-reel") return mockCapture.rationale[key];
+  if (key === "reminder" && item.reminder === "No reminder") return "No reminder was created because no time cue was clear.";
+  if (key === "collection") return `Because this save matches ${item.collection.toLowerCase()} context.`;
+  if (key === "intent") return `Because the source text points to ${item.intent}.`;
+  return item.context;
 }
 
 function CapturePreview({ item }: { item: (typeof memoryObjects)[number] }) {
@@ -787,7 +875,7 @@ function CaptureEditView({
   );
 }
 
-function TodayReview({
+function UpcomingReview({
   openCaptureDetail
 }: {
   openCaptureDetail: (captureId?: string) => void;
@@ -1037,6 +1125,54 @@ function NewCollection({ setFlowId }: { setFlowId: (flowId: FlowId) => void }) {
   );
 }
 
+function SettingsScreen() {
+  return (
+    <section className={styles.screenStack}>
+      <section className={styles.settingsGroup} aria-label="Capture settings">
+        <div className={styles.sectionHeaderRow}>
+          <h3>Capture</h3>
+          <span>Phone first</span>
+        </div>
+        <button className={styles.settingsRow} type="button">
+          <span>
+            <strong>Native share help</strong>
+            <small>Show first-run instructions until the first share capture succeeds.</small>
+          </span>
+          <em>On</em>
+        </button>
+        <button className={styles.settingsRow} type="button">
+          <span>
+            <strong>Clipboard detection</strong>
+            <small>Offer copied links in the Capture Sheet.</small>
+          </span>
+          <em>On</em>
+        </button>
+      </section>
+
+      <section className={styles.settingsGroup} aria-label="Trust settings">
+        <div className={styles.sectionHeaderRow}>
+          <h3>Trust</h3>
+          <span>Quiet confidence</span>
+        </div>
+        <button className={styles.settingsRow} type="button">
+          <span>
+            <strong>Reminder suggestions</strong>
+            <small>Ask before creating any future notification.</small>
+          </span>
+          <em>Review</em>
+        </button>
+        <button className={styles.settingsRow} type="button">
+          <span>
+            <strong>New collections</strong>
+            <small>Require confirmation before Sharebook creates structure.</small>
+          </span>
+          <em>Ask</em>
+        </button>
+      </section>
+    </section>
+  );
+}
+
 function ActionButton({
   children,
   icon,
@@ -1062,14 +1198,19 @@ function BottomNav({
   setFlowId: (flowId: FlowId) => void;
 }) {
   const nav = [
-    { label: "Inbox", flow: "zero" as FlowId, active: flowId === "zero" || flowId === "notification" || flowId === "receipt", icon: <InboxIcon aria-hidden="true" size={17} /> },
+    { label: "Upcoming", flow: "zero" as FlowId, active: flowId === "zero" || flowId === "notification" || flowId === "receipt", icon: <InboxIcon aria-hidden="true" size={17} /> },
     { label: "Search", flow: "search" as FlowId, active: flowId === "search", icon: <Search aria-hidden="true" size={17} /> },
-    { label: "Upcoming", flow: "today-review" as FlowId, active: flowId === "today-review", icon: <CalendarClock aria-hidden="true" size={17} /> },
     {
       label: "Library",
       flow: "collections" as FlowId,
-      active: flowId === "collections" || flowId === "collection-detail" || flowId === "new-collection",
+      active: flowId === "collections" || flowId === "collection-detail" || flowId === "new-collection" || flowId === "today-review",
       icon: <Library aria-hidden="true" size={17} />
+    },
+    {
+      label: "Settings",
+      flow: "settings" as FlowId,
+      active: flowId === "settings",
+      icon: <Settings aria-hidden="true" size={17} />
     }
   ];
 
@@ -1079,6 +1220,8 @@ function BottomNav({
         <button
           className={styles.navButton}
           data-active={item.active}
+          aria-current={item.active ? "page" : undefined}
+          aria-label={item.label}
           key={item.label}
           onClick={() => setFlowId(item.flow)}
           title={item.label}
@@ -1102,6 +1245,8 @@ function BottomNav({
         <button
           className={styles.navButton}
           data-active={item.active}
+          aria-current={item.active ? "page" : undefined}
+          aria-label={item.label}
           key={item.label}
           onClick={() => setFlowId(item.flow)}
           title={item.label}

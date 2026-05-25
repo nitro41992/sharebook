@@ -2,15 +2,15 @@
 
 These are low-fidelity product wireframes for shared understanding. They describe structure and flow, not final visual style.
 
-## 1. Zero-Capture Today
+## 1. Zero-Capture Upcoming
 
 Purpose: turn an empty product into the first successful Capture.
 
 ```text
-Today
+Upcoming
 --------------------------------------------------
 
-Save something you want to remember
+Save something for when it matters later
 
 [ Share from another app ]        primary
 
@@ -143,12 +143,12 @@ Notes:
 - Chips can expand into small pickers.
 - Entities support the decision but are not the editing task.
 
-## 6. Today With One Capture
+## 6. Upcoming With One Capture
 
-Purpose: show the app becoming useful after activation.
+Purpose: show the app becoming useful after activation without implying daily use.
 
 ```text
-Today
+Upcoming
 --------------------------------------------------
 
 Needs a quick look
@@ -158,7 +158,7 @@ try this place | reminder suggested | NYC restaurants
 Recently saved
 [ Ramen reel ]  Ready
 
-Coming up
+Across days
 No confirmed reminders
 
 Nearby or places
@@ -167,7 +167,7 @@ Nearby or places
 
 Notes:
 
-- Today combines freshness, review needs, and relevant resurfacing.
+- Upcoming combines review needs and relevant resurfacing across days or weeks.
 - Inbox can appear as a badge or module, not necessarily a bottom tab.
 
 ## 7. Library
@@ -257,4 +257,3 @@ Notes:
 
 - Search starts as a search box with explainable results.
 - Commands are filters, not a chatbot default.
-

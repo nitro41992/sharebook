@@ -60,9 +60,9 @@ _Avoid_: Bookmark list, folder, separate suggestions inbox
 A user-facing view over Captures and related entities that helps the user find saved things by a primary access pattern, such as meaning, place, time, or recency. Search, Map, Agenda, and Review Inbox are Retrieval Lenses, not separate saved object types.
 _Avoid_: Item type, folder, separate app
 
-**Today**:
-The default home Retrieval Lens that surfaces what matters now from recent Captures, due or upcoming Reminders, unresolved review needs, and relevant place or time context. When no Captures exist, Today becomes a first-capture empty state rather than an empty dashboard.
-_Avoid_: Dashboard, activity feed, productivity homepage
+**Upcoming**:
+The default home Retrieval Lens that surfaces saved things when they become relevant across days or weeks, such as upcoming Reminders, unresolved review needs, time-relevant Captures, or place cues. Upcoming should not imply the user has something to do in Sharebook every day; when no Captures exist, it becomes a first-capture empty state rather than an empty dashboard.
+_Avoid_: Daily dashboard, activity feed, productivity homepage
 
 **Map**:
 A Retrieval Lens that shows Captures associated with place-like Captured Entities, such as restaurants, venues, stores, hotels, trip ideas, or event locations. High-confidence captured places may appear on Map automatically, while uncertain places should go to Review Inbox before appearing as normal pins. Map should not show where the user happened to be when saving unless that location is part of the Capture's meaning or a user-approved Reminder trigger.

@@ -1,59 +1,58 @@
 export type UrlMetadata = {
+  provider?: string | null;
+  type?: string | null;
   title?: string | null;
   description?: string | null;
   image?: string | null;
   canonical?: string | null;
   siteName?: string | null;
   favicon?: string | null;
+  authorName?: string | null;
+  authorUrl?: string | null;
 };
 
-function pickMeta(html: string, names: string[]) {
-  for (const name of names) {
-    const pattern = new RegExp(
-      `<meta[^>]+(?:property|name)=["']${name}["'][^>]+content=["']([^"']+)["'][^>]*>`,
-      "i"
-    );
-    const match = html.match(pattern);
-    if (match?.[1]) return decodeHtml(match[1]);
+function oembedEndpoint(url: string) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be" || host === "music.youtube.com") {
+      return `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`;
+    }
+    if (host === "reddit.com" || host.endsWith(".reddit.com")) {
+      return `https://www.reddit.com/oembed?format=json&url=${encodeURIComponent(url)}`;
+    }
+  } catch {
+    return null;
   }
   return null;
 }
 
-function decodeHtml(value: string) {
-  return value
-    .replaceAll("&amp;", "&")
-    .replaceAll("&quot;", "\"")
-    .replaceAll("&#39;", "'")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">");
-}
-
 export async function fetchUrlMetadata(url: string): Promise<UrlMetadata> {
+  const endpoint = oembedEndpoint(url);
+  if (!endpoint) return { canonical: url };
+
   try {
-    const response = await fetch(url, {
+    const response = await fetch(endpoint, {
       headers: {
-        "user-agent":
-          "Mozilla/5.0 SharebookPhase0A/0.1 (+https://github.com/nitro41992/sharebook)"
+        accept: "application/json",
+        "user-agent": "Sharebook/0.1 (+https://github.com/nitro41992/sharebook)"
       },
       signal: AbortSignal.timeout(7000)
     });
-
-    const html = await response.text();
-    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const canonicalMatch = html.match(
-      /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["'][^>]*>/i
-    );
-    const iconMatch = html.match(
-      /<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]+href=["']([^"']+)["'][^>]*>/i
-    );
+    if (!response.ok) return { canonical: url };
+    const data = await response.json();
 
     return {
-      title: pickMeta(html, ["og:title", "twitter:title"]) ?? titleMatch?.[1]?.trim() ?? null,
-      description: pickMeta(html, ["og:description", "twitter:description", "description"]),
-      image: pickMeta(html, ["og:image", "twitter:image"]),
-      canonical: canonicalMatch?.[1] ?? url,
-      siteName: pickMeta(html, ["og:site_name"]),
-      favicon: iconMatch?.[1] ?? null
+      provider: "oembed",
+      type: typeof data.type === "string" ? data.type : null,
+      title: typeof data.title === "string" ? data.title : null,
+      description: null,
+      image: typeof data.thumbnail_url === "string" ? data.thumbnail_url : null,
+      canonical: url,
+      siteName: typeof data.provider_name === "string" ? data.provider_name : null,
+      favicon: null,
+      authorName: typeof data.author_name === "string" ? data.author_name : null,
+      authorUrl: typeof data.author_url === "string" ? data.author_url : null
     };
   } catch {
     return {
